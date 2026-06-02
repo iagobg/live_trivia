@@ -1,0 +1,12 @@
+_build/
+deps/
+.git/
+.elixir_ls/
+priv/static/assets/
+priv/static/cache_manifest.json
+node_modules/
+assets/node_modules/
+npm-debug.log
+Dockerfile
+docker-compose*.yml
+.DS_Store
