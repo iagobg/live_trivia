@@ -2,7 +2,7 @@ defmodule LiveTrivia.Game do
   use GenServer
 
   @topic "game"
-  @hint_times [10, 15, 20, 25, 28]
+  @hint_times [5, 10, 15, 20, 25]
   @round_duration_ms 30_000
   @results_duration_ms 3_000
 

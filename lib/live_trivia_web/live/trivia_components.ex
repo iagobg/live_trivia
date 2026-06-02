@@ -1,5 +1,5 @@
 defmodule LiveTriviaWeb.TriviaComponents do
-  use Phoenix.Component
+  use LiveTriviaWeb, :html
 
   attr :game_state, :map, required: true
   attr :players, :list, required: true
@@ -271,7 +271,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
 
       <div class="mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-lg flex-col justify-center">
         <div class="mb-8 text-center">
-          <div class="text-5xl font-black text-amber-300">TROPHY</div>
+          <img src={~p"/assets/img/trophy.png"} alt="Trophy" class="mx-auto h-24 w-24 object-contain" />
           <h1 class="mt-3 text-4xl font-black">Final Leaderboard</h1>
           <p class="mt-2 text-gray-400">Game over</p>
         </div>
