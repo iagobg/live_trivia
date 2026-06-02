@@ -2,10 +2,9 @@ defmodule LiveTriviaWeb.AdminLive do
   use LiveTriviaWeb, :live_view
 
   alias LiveTrivia.Game
+  alias LiveTrivia.Lobby
   alias LiveTriviaWeb.Presence
   import LiveTriviaWeb.TriviaComponents
-
-  @players_topic "players"
 
   @example_questions [
     %{
@@ -103,33 +102,73 @@ defmodule LiveTriviaWeb.AdminLive do
   ]
 
   @impl true
+  def mount(%{"room_id" => room_id}, session, socket) do
+    player_id = Map.fetch!(session, "player_id")
+    room = Lobby.get_room(room_id)
+
+    cond do
+      is_nil(room) ->
+        {:ok,
+         socket
+         |> put_flash(:error, "This room was closed.")
+         |> push_navigate(to: ~p"/")}
+
+      room.admin_id != player_id ->
+        {:ok, push_navigate(socket, to: ~p"/rooms/#{room_id}")}
+
+      true ->
+        if connected?(socket) do
+          Game.subscribe(room_id)
+          Phoenix.PubSub.subscribe(LiveTrivia.PubSub, players_topic(room_id))
+          Phoenix.PubSub.subscribe(LiveTrivia.PubSub, room_topic(room_id))
+          Phoenix.PubSub.subscribe(LiveTrivia.PubSub, typing_topic(room_id))
+          track_admin(room_id, player_id)
+          Lobby.touch_room(room_id)
+        end
+
+        socket =
+          socket
+          |> assign(:page_title, "Admin - #{room.name}")
+          |> assign(:room, room)
+          |> assign(:room_id, room_id)
+          |> assign(:player_id, player_id)
+          |> assign(:game_state, Game.get_state(room_id))
+          |> assign(:players, players(room_id))
+          |> assign(:typing_by_player, %{})
+          |> assign(:guess_results, %{})
+          |> assign(:json_text, Jason.encode!(@example_questions, pretty: true))
+          |> assign(:validation_error, nil)
+
+        {:ok, socket}
+    end
+  end
+
   def mount(_params, _session, socket) do
-    if connected?(socket) do
-      Game.subscribe()
-      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, @players_topic)
+    {:ok, push_navigate(socket, to: ~p"/")}
+  end
+
+  @impl true
+  def terminate(_reason, socket) do
+    if socket.assigns[:room_id] && socket.assigns[:player_id] do
+      Presence.untrack(self(), admin_topic(socket.assigns.room_id), socket.assigns.player_id)
+      Lobby.admin_left(socket.assigns.room_id)
     end
 
-    socket =
-      socket
-      |> assign(:page_title, "Admin - Live Trivia")
-      |> assign(:game_state, Game.get_state())
-      |> assign(:players, players())
-      |> assign(:json_text, Jason.encode!(@example_questions, pretty: true))
-      |> assign(:validation_error, nil)
-
-    {:ok, socket}
+    :ok
   end
 
   @impl true
   def handle_event("load_demo", _params, socket) do
-    Game.load_questions(@example_questions)
+    Game.load_questions(socket.assigns.room_id, @example_questions)
+    Lobby.touch_room(socket.assigns.room_id)
     {:noreply, assign(socket, :validation_error, nil)}
   end
 
   def handle_event("load_json", %{"quiz" => %{"json" => json}}, socket) do
     case decode_questions(json) do
       {:ok, questions} ->
-        Game.load_questions(questions)
+        Game.load_questions(socket.assigns.room_id, questions)
+        Lobby.touch_room(socket.assigns.room_id)
 
         {:noreply,
          socket
@@ -142,47 +181,84 @@ defmodule LiveTriviaWeb.AdminLive do
   end
 
   def handle_event("start", _params, socket) do
-    Game.start_quiz()
+    Game.start_quiz(socket.assigns.room_id)
     {:noreply, socket}
   end
 
   def handle_event("next", _params, socket) do
-    Game.next_round()
+    Game.next_round(socket.assigns.room_id)
     {:noreply, socket}
   end
 
   def handle_event("reset", _params, socket) do
-    Game.force_reset()
+    Game.force_reset(socket.assigns.room_id)
     {:noreply, socket}
   end
 
+  def handle_event("close_room", _params, socket) do
+    Lobby.close_room(socket.assigns.room_id)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Room closed.")
+     |> push_navigate(to: ~p"/")}
+  end
+
   @impl true
-  def handle_info({:game_state, game_state}, socket),
-    do: {:noreply, assign(socket, :game_state, game_state)}
+  def handle_info({:game_state, game_state}, socket) do
+    socket =
+      if new_round?(socket.assigns.game_state, game_state) do
+        socket
+        |> assign(:typing_by_player, %{})
+        |> assign(:guess_results, %{})
+      else
+        socket
+      end
+
+    {:noreply, assign(socket, :game_state, game_state)}
+  end
+
+  def handle_info({:room_closed, _room_id}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "This room was closed.")
+     |> push_navigate(to: ~p"/")}
+  end
 
   def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff"}, socket),
-    do: {:noreply, assign(socket, :players, players())}
+    do: {:noreply, assign(socket, :players, players(socket.assigns.room_id))}
+
+  def handle_info({:player_typing, player_id, text, guess_result}, socket) do
+    {:noreply,
+     socket
+     |> assign(:typing_by_player, Map.put(socket.assigns.typing_by_player, player_id, text))
+     |> assign(:guess_results, Map.put(socket.assigns.guess_results, player_id, guess_result))}
+  end
 
   @impl true
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
       <%= if @game_state.phase == :podium do %>
-        <.admin_header game_state={@game_state} validation_error={@validation_error} />
+        <.admin_header
+          room={@room}
+          game_state={@game_state}
+          validation_error={@validation_error}
+        />
         <.podium game_state={@game_state} players={@players} />
       <% else %>
-        <.admin_header game_state={@game_state} validation_error={@validation_error} />
-        <.game_stage game_state={@game_state} players={@players} current_player_id={nil}>
-          <div
-            :if={@game_state.phase == :results && current_question(@game_state)}
-            class="absolute bottom-8 left-1/2 z-20 -translate-x-1/2"
-          >
-            <div class="rounded-xl border border-green-600 bg-green-900/80 px-6 py-3 text-center">
-              <div class="mb-1 text-xs uppercase tracking-widest text-green-400">Answer</div>
-              <div class="text-xl font-bold text-white">{current_question(@game_state).answer}</div>
-            </div>
-          </div>
-        </.game_stage>
+        <.admin_header
+          room={@room}
+          game_state={@game_state}
+          validation_error={@validation_error}
+        />
+        <.game_stage
+          game_state={@game_state}
+          players={@players}
+          current_player_id={nil}
+          typing_by_player={@typing_by_player}
+          guess_results={@guess_results}
+        />
       <% end %>
 
       <div class="fixed bottom-4 right-4 z-50 w-[min(32rem,calc(100vw-2rem))] rounded-xl border border-gray-700 bg-gray-900/95 p-3 text-white shadow-2xl">
@@ -214,6 +290,7 @@ defmodule LiveTriviaWeb.AdminLive do
   end
 
   attr :game_state, :map, required: true
+  attr :room, :map, required: true
   attr :validation_error, :string, default: nil
 
   def admin_header(assigns) do
@@ -221,6 +298,9 @@ defmodule LiveTriviaWeb.AdminLive do
     <div class="fixed left-0 right-0 top-0 z-50 border-b border-gray-700 bg-gray-900/95 px-4 py-2 text-white">
       <div class="flex flex-wrap items-center gap-3">
         <span class="mr-2 text-sm font-bold text-indigo-400">ADMIN</span>
+        <span class="rounded-full bg-indigo-500/15 px-2 py-1 text-xs font-semibold text-indigo-200">
+          {@room.name}
+        </span>
         <span class="rounded-full bg-gray-700 px-2 py-1 text-xs font-medium text-gray-300">
           {@game_state.phase |> Atom.to_string() |> String.replace("_", " ") |> String.upcase()}
           <%= if @game_state.phase == :in_progress do %>
@@ -247,6 +327,13 @@ defmodule LiveTriviaWeb.AdminLive do
           class="rounded-lg bg-red-800 px-3 py-1.5 text-sm font-medium hover:bg-red-700"
         >
           Force Reset
+        </button>
+        <button
+          phx-click="close_room"
+          data-confirm="Close this room?"
+          class="rounded-lg bg-gray-800 px-3 py-1.5 text-sm font-medium hover:bg-gray-700"
+        >
+          Close Room
         </button>
       </div>
     </div>
@@ -293,15 +380,28 @@ defmodule LiveTriviaWeb.AdminLive do
     hints ++ Enum.map((length(hints) + 1)..5//1, &"Hint #{&1}")
   end
 
-  defp players do
-    @players_topic
+  defp players(room_id) do
+    room_id
+    |> players_topic()
     |> Presence.list()
     |> Enum.map(fn {player_id, %{metas: [meta | _]}} -> Map.put(meta, :player_id, player_id) end)
     |> Enum.sort_by(& &1.joined_at)
   end
 
-  defp current_question(%{phase: phase, questions: questions, current_index: index})
-       when phase in [:in_progress, :results], do: Enum.at(questions, index)
+  defp players_topic(room_id), do: "players:#{room_id}"
+  defp room_topic(room_id), do: "room:#{room_id}"
+  defp admin_topic(room_id), do: "admins:#{room_id}"
+  defp typing_topic(room_id), do: "typing:#{room_id}"
 
-  defp current_question(_state), do: nil
+  defp track_admin(room_id, player_id) do
+    Presence.track(self(), admin_topic(room_id), player_id, %{
+      admin_id: player_id,
+      joined_at: System.system_time(:millisecond)
+    })
+  end
+
+  defp new_round?(old_state, new_state) do
+    old_state.current_index != new_state.current_index ||
+      (old_state.phase != new_state.phase && new_state.phase == :in_progress)
+  end
 end

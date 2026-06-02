@@ -12,7 +12,9 @@ defmodule LiveTrivia.Application do
       {DNSCluster, query: Application.get_env(:live_trivia, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: LiveTrivia.PubSub},
       LiveTriviaWeb.Presence,
-      LiveTrivia.Game,
+      {Registry, keys: :unique, name: LiveTrivia.GameRegistry},
+      {DynamicSupervisor, strategy: :one_for_one, name: LiveTrivia.RoomSupervisor},
+      LiveTrivia.Lobby,
       # Start to serve requests, typically the last entry
       LiveTriviaWeb.Endpoint
     ]
