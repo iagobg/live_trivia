@@ -98,7 +98,8 @@ Hooks.RoundMeter = {
 
   paint(progress, seconds, score) {
     const color = seconds <= 5 ? "#ef4444" : seconds <= 14 ? "#eab308" : "#22c55e"
-    const circumference = 2 * Math.PI * 110
+    const radius = this.progress ? Number(this.progress.getAttribute("r") || 110) : 110
+    const circumference = 2 * Math.PI * radius
 
     if (this.progress) {
       this.progress.style.stroke = color

@@ -1,9 +1,11 @@
 defmodule LiveTriviaWeb.TriviaComponents do
-  use Phoenix.Component
+  use LiveTriviaWeb, :html
 
   attr :game_state, :map, required: true
   attr :players, :list, required: true
   attr :current_player_id, :any, default: nil
+  attr :typing_by_player, :map, default: %{}
+  attr :guess_results, :map, default: %{}
   slot :inner_block
 
   def game_stage(assigns) do
@@ -22,8 +24,10 @@ defmodule LiveTriviaWeb.TriviaComponents do
           players={@players}
           game_state={@game_state}
           current_player_id={@current_player_id}
+          typing_by_player={@typing_by_player}
+          guess_results={@guess_results}
         />
-        <.central_hub game_state={@game_state} />
+        <.central_hub game_state={@game_state} players={@players} />
       </div>
 
       {render_slot(@inner_block)}
@@ -34,59 +38,47 @@ defmodule LiveTriviaWeb.TriviaComponents do
   attr :players, :list, required: true
   attr :game_state, :map, required: true
   attr :current_player_id, :any, default: nil
+  attr :typing_by_player, :map, default: %{}
+  attr :guess_results, :map, default: %{}
 
   def player_orbit(assigns) do
     assigns = assign(assigns, :count, max(length(assigns.players), 1))
 
     ~H"""
     <div class="pointer-events-none absolute inset-0">
-      <div
+      <.live_component
         :for={{player, index} <- Enum.with_index(@players)}
-        class="pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
-        style={orbit_style(index, @count)}
-      >
-        <div
-          class={[
-            "flex h-12 w-12 items-center justify-center rounded-full border-2 text-lg font-bold text-white transition-all",
-            result_shadow(player.guess_result)
-          ]}
-          style={"background-color: #{player.color}33; border-color: #{result_color(player.guess_result, player.color)};"}
-        >
-          {String.first(player.name) |> String.upcase()}
-        </div>
-        <div class="text-center">
-          <div
-            class="rounded-full border px-2 py-0.5 text-xs font-semibold"
-            style={"color: #{player.color}; background-color: #{player.color}22; border-color: #{player.color}44;"}
-          >
-            {player.name}
-            <span :if={player.player_id == @current_player_id} class="ml-1 text-gray-500">(you)</span>
-          </div>
-          <div class="mt-0.5 font-mono text-xs text-gray-500">
-            {Map.get(@game_state.player_scores, player.player_id, 0)} pts
-          </div>
-        </div>
-        <div
-          :if={player.typing_text != ""}
-          class="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap"
-        >
-          <div class="max-w-32 truncate rounded-lg border border-gray-700 bg-gray-800/90 px-2 py-1 text-xs text-gray-300">
-            {player.typing_text}
-          </div>
-        </div>
-      </div>
+        module={LiveTriviaWeb.PlayerOrbitComponent}
+        id={"player-#{player.player_id}"}
+        player={player}
+        index={index}
+        count={@count}
+        current_player_id={@current_player_id}
+        score={Map.get(@game_state.player_scores, player.player_id, 0)}
+        guess_result={Map.get(@guess_results, player.player_id)}
+        typing_text={Map.get(@typing_by_player, player.player_id, "")}
+        leading={
+          (@game_state.closest_guess && @game_state.closest_guess.player_id == player.player_id) ||
+            false
+        }
+      />
     </div>
     """
   end
 
   attr :game_state, :map, required: true
+  attr :players, :list, required: true
 
   def central_hub(assigns) do
     assigns =
       assigns
       |> assign(:current_question, current_question(assigns.game_state))
-      |> assign(:time_left, time_left(assigns.game_state))
-      |> assign(:available_score, available_score(assigns.game_state))
+      |> assign(:round_label, round_label(assigns.game_state))
+      |> assign(:closest_color, closest_player_color(assigns.game_state, assigns.players))
+      |> assign(
+        :visible_hints,
+        visible_hints(current_question(assigns.game_state), assigns.game_state)
+      )
 
     ~H"""
     <div class="relative z-10 flex flex-col items-center justify-center">
@@ -98,33 +90,33 @@ defmodule LiveTriviaWeb.TriviaComponents do
         data-server-now={@game_state.server_now}
         data-round={@game_state.current_index}
         data-duration="30000"
-        class="relative flex h-[280px] w-[280px] items-center justify-center"
+        class="relative flex h-[340px] w-[340px] items-center justify-center sm:h-[360px] sm:w-[360px]"
       >
         <svg
-          width="280"
-          height="280"
-          viewBox="0 0 280 280"
-          class="pointer-events-none absolute inset-0 -rotate-90"
+          width="360"
+          height="360"
+          viewBox="0 0 360 360"
+          class="pointer-events-none absolute inset-0 h-full w-full -rotate-90"
           aria-hidden="true"
         >
           <circle
-            cx="140"
-            cy="140"
-            r="110"
+            cx="180"
+            cy="180"
+            r="160"
             fill="none"
             stroke="rgba(255,255,255,0.08)"
             stroke-width="8"
           />
           <circle
             data-role="timer-progress"
-            cx="140"
-            cy="140"
-            r="110"
+            cx="180"
+            cy="180"
+            r="160"
             fill="none"
             stroke="#22c55e"
             stroke-width="8"
             stroke-linecap="round"
-            stroke-dasharray="691.15 691.15"
+            stroke-dasharray="1005.31 1005.31"
             class={[
               "round-progress transition-[stroke] duration-300",
               @game_state.phase != :in_progress && "opacity-0"
@@ -135,8 +127,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
         <div
           data-role="hub-shell"
           class={[
-            "relative flex h-56 w-56 flex-col items-center justify-center rounded-full border-2 bg-gray-900 px-4 text-center shadow-2xl",
-            @game_state.phase == :in_progress && @time_left <= 5 && "animate-pulse",
+            "relative flex h-[300px] w-[300px] flex-col items-center justify-center rounded-full border-2 bg-gray-900 px-7 py-7 text-center shadow-2xl sm:h-80 sm:w-80 sm:px-8 sm:py-8",
             if(@game_state.phase == :in_progress, do: "border-gray-700", else: "border-gray-800")
           ]}
         >
@@ -153,34 +144,97 @@ defmodule LiveTriviaWeb.TriviaComponents do
             <div class="text-xs text-gray-500">Waiting to start</div>
           </div>
 
-          <div :if={@game_state.phase == :in_progress} class="flex flex-col items-center gap-1">
+          <div
+            :if={@game_state.phase == :in_progress}
+            class="flex h-full w-full -translate-y-2 flex-col items-center justify-center gap-2"
+          >
             <div
-              data-role="timer-value"
-              class={["text-5xl font-black tabular-nums", timer_color(@time_left)]}
+              :if={@round_label}
+              class="rounded-full border border-indigo-500/40 bg-indigo-500/15 px-3 py-1 text-[0.65rem] font-black uppercase tracking-[0.12em] text-indigo-100"
             >
-              {ceil(@time_left)}
+              Round {@round_label}
             </div>
-            <div class="text-xs uppercase tracking-widest text-gray-500">seconds</div>
-            <div data-role="score-value" class="mt-1 text-2xl font-bold text-amber-400">
-              {@available_score}
+
+            <div :if={@current_question} class="w-full">
+              <p class="mx-auto line-clamp-2 max-w-56 text-sm font-bold leading-tight text-white">
+                {@current_question.question}
+              </p>
             </div>
-            <div class="text-xs uppercase tracking-widest text-gray-500">pts available</div>
-            <div class="mt-1 text-xs text-gray-600">
-              Q {@game_state.current_index + 1}/{length(@game_state.questions)}
+
+            <div class="grid w-full grid-cols-2 items-center gap-2">
+              <div>
+                <div
+                  data-role="timer-value"
+                  class="text-4xl font-black leading-none text-green-500 tabular-nums"
+                >
+                  30
+                </div>
+                <div class="mt-0.5 text-[0.62rem] uppercase tracking-widest text-gray-500">
+                  seconds
+                </div>
+              </div>
+              <div>
+                <div data-role="score-value" class="text-2xl font-black leading-none text-amber-400">
+                  1000
+                </div>
+                <div class="mt-0.5 text-[0.62rem] uppercase tracking-widest text-gray-500">
+                  pts
+                </div>
+              </div>
+            </div>
+
+            <div class="flex h-[4.8rem] w-full flex-col justify-start gap-1 overflow-hidden">
+              <div
+                :for={hint <- @visible_hints}
+                class="h-5 truncate rounded-md border border-indigo-500/50 bg-indigo-600/70 px-2 py-0.5 text-[0.66rem] font-semibold leading-4 text-white"
+              >
+                {hint}
+              </div>
+            </div>
+
+            <div class="flex h-8 w-full items-center justify-center">
+              <div
+                :if={@game_state.closest_guess}
+                class="max-w-full truncate rounded-full border px-3 py-1 text-xs font-black"
+                style={"border-color: #{@closest_color}; color: #{@closest_color}; background: #{@closest_color}18; box-shadow: 0 0 18px #{@closest_color}28;"}
+              >
+                {@game_state.closest_guess.guess_text} ({@game_state.closest_guess.distance})
+              </div>
             </div>
           </div>
 
-          <div :if={@game_state.phase == :results} class="flex flex-col items-center gap-1">
-            <div class="text-sm font-bold text-white">
+          <div
+            :if={@game_state.phase == :results}
+            class="flex h-full w-full flex-col items-center justify-center gap-2"
+          >
+            <div
+              :if={@round_label}
+              class="rounded-full border border-indigo-500/40 bg-indigo-500/15 px-3 py-1 text-[0.65rem] font-black uppercase tracking-[0.12em] text-indigo-100"
+            >
+              Round {@round_label}
+            </div>
+            <div class="text-base font-black text-white">
               {result_title(@game_state.round_winner)}
             </div>
-            <div :if={@game_state.round_winner} class="text-xs font-semibold text-yellow-400">
-              {@game_state.round_winner.player_name}
+            <div
+              :if={@game_state.round_winner}
+              class="text-sm font-black"
+              style={"color: #{winner_color(@game_state.round_winner, @players)};"}
+            >
+              {@game_state.round_winner.player_name} +{@game_state.round_winner.score}
             </div>
-            <div :if={@current_question} class="text-sm font-bold text-white">
-              Answer: {@current_question.answer}
+            <div
+              :if={@current_question}
+              class="w-full rounded-lg border border-green-600/50 bg-green-900/40 px-3 py-2"
+            >
+              <div class="text-[0.58rem] font-black uppercase tracking-[0.16em] text-green-300">
+                Answer
+              </div>
+              <div class="mt-0.5 truncate text-sm font-black text-white">
+                {@current_question.answer}
+              </div>
             </div>
-            <div class="mt-1 text-xs text-gray-500">Next round soon</div>
+            <div class="text-xs text-gray-500">Next round soon</div>
           </div>
 
           <div :if={@game_state.phase == :podium} class="flex flex-col items-center gap-2">
@@ -188,44 +242,6 @@ defmodule LiveTriviaWeb.TriviaComponents do
             <div class="text-sm font-medium text-gray-400">Final leaderboard</div>
           </div>
         </div>
-      </div>
-
-      <div :if={@current_question} class="mt-6 max-w-sm text-center">
-        <div class="rounded-xl border border-gray-700 bg-gray-900/80 px-5 py-3">
-          <p class="text-base font-semibold leading-snug text-white">{@current_question.question}</p>
-        </div>
-      </div>
-
-      <div
-        :if={@current_question && @game_state.phase in [:in_progress, :results]}
-        class="mt-3 flex max-w-sm flex-wrap justify-center gap-2"
-      >
-        <div
-          :for={{hint, index} <- Enum.with_index(@current_question.hints)}
-          class={[
-            "rounded-lg border px-3 py-1.5 text-xs font-medium",
-            if(index < @game_state.revealed_hints,
-              do: "border-indigo-500 bg-indigo-600/80 text-white",
-              else: "border-gray-700 bg-gray-800/50 text-gray-600"
-            )
-          ]}
-        >
-          <%= if index < @game_state.revealed_hints do %>
-            {hint}
-          <% else %>
-            Hint {index + 1}
-          <% end %>
-        </div>
-      </div>
-
-      <div
-        :if={@game_state.closest_guess}
-        class="mt-3 rounded-xl border border-gray-700 bg-gray-900/60 px-4 py-2 text-center text-xs"
-      >
-        <span class="text-gray-500">Closest so far: </span>
-        <span class="font-semibold text-yellow-400">{@game_state.closest_guess.player_name}</span>
-        <span class="text-gray-500"> - "{@game_state.closest_guess.guess_text}"</span>
-        <span class="text-gray-600"> (d={@game_state.closest_guess.distance})</span>
       </div>
     </div>
     """
@@ -255,7 +271,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
 
       <div class="mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-lg flex-col justify-center">
         <div class="mb-8 text-center">
-          <div class="text-5xl font-black text-amber-300">TROPHY</div>
+          <img src={~p"/assets/img/trophy.png"} alt="Trophy" class="mx-auto h-24 w-24 object-contain" />
           <h1 class="mt-3 text-4xl font-black">Final Leaderboard</h1>
           <p class="mt-2 text-gray-400">Game over</p>
         </div>
@@ -292,25 +308,6 @@ defmodule LiveTriviaWeb.TriviaComponents do
     """
   end
 
-  defp orbit_style(index, count) do
-    angle = index / count * 2 * :math.pi() - :math.pi() / 2
-    x = 50 + 24 * :math.cos(angle)
-    y = 50 + 32 * :math.sin(angle)
-    "left: #{x}%; top: #{y}%;"
-  end
-
-  defp result_color(:correct, _color), do: "#22c55e"
-  defp result_color(:close, _color), do: "#eab308"
-  defp result_color(:near, _color), do: "#f97316"
-  defp result_color(:far, _color), do: "#ef4444"
-  defp result_color(_result, color), do: color
-
-  defp result_shadow(:correct), do: "shadow-[0_0_28px_rgba(34,197,94,0.8)]"
-  defp result_shadow(:close), do: "shadow-[0_0_28px_rgba(234,179,8,0.8)]"
-  defp result_shadow(:near), do: "shadow-[0_0_28px_rgba(249,115,22,0.8)]"
-  defp result_shadow(:far), do: "shadow-[0_0_28px_rgba(239,68,68,0.8)]"
-  defp result_shadow(_result), do: nil
-
   defp current_question(%{phase: phase, questions: questions, current_index: index})
        when phase in [:in_progress, :results] do
     Enum.at(questions, index)
@@ -318,26 +315,38 @@ defmodule LiveTriviaWeb.TriviaComponents do
 
   defp current_question(_state), do: nil
 
-  defp time_left(%{phase: :in_progress, round_start_time: start}) when is_integer(start) do
-    max(0, 30 - (System.system_time(:millisecond) - start) / 1_000)
-  end
-
-  defp time_left(_state), do: 0
-
-  defp available_score(%{phase: :in_progress, round_start_time: start}) when is_integer(start) do
-    elapsed = (System.system_time(:millisecond) - start) / 1_000
-    max(250, round(1_000 - 30 * max(0, elapsed - 5)))
-  end
-
-  defp available_score(_state), do: 1_000
-
-  defp timer_color(time_left) when time_left <= 5, do: "text-red-500"
-  defp timer_color(time_left) when time_left <= 14, do: "text-yellow-400"
-  defp timer_color(_time_left), do: "text-green-500"
-
   defp result_title(%{is_consolation: true}), do: "Closest Guess"
   defp result_title(%{is_consolation: false}), do: "Correct!"
   defp result_title(_winner), do: "Time's Up"
+
+  defp round_label(%{phase: phase, questions: questions, current_index: index})
+       when phase in [:in_progress, :results] and length(questions) > 0 do
+    "#{min(index + 1, length(questions))}/#{length(questions)}"
+  end
+
+  defp round_label(_game_state), do: nil
+
+  defp closest_player_color(%{closest_guess: %{player_id: player_id}}, players) do
+    player = Enum.find(players, &(&1.player_id == player_id))
+    (player && player.color) || "#facc15"
+  end
+
+  defp closest_player_color(_game_state, _players), do: "#facc15"
+
+  defp winner_color(%{player_id: player_id}, players) do
+    player = Enum.find(players, &(&1.player_id == player_id))
+    (player && player.color) || "#facc15"
+  end
+
+  defp winner_color(_winner, _players), do: "#facc15"
+
+  defp visible_hints(nil, _game_state), do: []
+
+  defp visible_hints(%{hints: hints}, %{revealed_hints: revealed_hints}) do
+    hints
+    |> Enum.take(revealed_hints)
+    |> Enum.take(-3)
+  end
 
   defp leaders(game_state, players) do
     game_state.player_scores

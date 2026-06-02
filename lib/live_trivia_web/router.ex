@@ -18,8 +18,9 @@ defmodule LiveTriviaWeb.Router do
   scope "/", LiveTriviaWeb do
     pipe_through :browser
 
-    live "/", PlayerLive
-    live "/admin", AdminLive
+    live "/", LobbyLive
+    live "/rooms/:room_id", PlayerLive
+    live "/rooms/:room_id/admin", AdminLive
   end
 
   # Other scopes may use custom stacks.

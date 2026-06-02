@@ -2,57 +2,175 @@ defmodule LiveTriviaWeb.PlayerLive do
   use LiveTriviaWeb, :live_view
 
   alias LiveTrivia.Game
+  alias LiveTrivia.Lobby
+  alias LiveTrivia.PlayerColors
   alias LiveTriviaWeb.Presence
   import LiveTriviaWeb.TriviaComponents
 
-  @players_topic "players"
-
   @impl true
-  def mount(_params, session, socket) do
-    if connected?(socket) do
-      Game.subscribe()
-      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, @players_topic)
-    end
-
+  def mount(%{"room_id" => room_id}, session, socket) do
     player_id = Map.fetch!(session, "player_id")
     player_color = Map.fetch!(session, "player_color")
+    room = Lobby.get_room(room_id)
+    game_state = room && Game.get_state(room_id)
+    joinable = game_state && joinable?(game_state)
+    reservation = reserve_player_slot(socket, room, joinable, room_id, player_id)
+
+    if connected?(socket) && room do
+      Game.subscribe(room_id)
+      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, players_topic(room_id))
+      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, room_topic(room_id))
+      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, typing_topic(room_id))
+      Lobby.touch_room(room_id)
+    end
+
+    candidate_color = initial_color(room_id, player_id, player_color)
+
+    if connected?(socket) && room && joinable && reservation == :ok do
+      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, color_topic(room_id))
+      track_color_selection(room_id, player_id, candidate_color)
+    end
 
     socket =
       socket
-      |> assign(:page_title, "Live Trivia")
-      |> assign(:game_state, Game.get_state())
-      |> assign(:players, players())
+      |> assign(:page_title, (room && room.name) || "Closed Room")
+      |> assign(:room, room)
+      |> assign(:room_id, room_id)
+      |> assign(:game_state, game_state)
+      |> assign(:joinable, joinable)
+      |> assign(:players, if(room, do: players(room_id), else: []))
       |> assign(:player_id, player_id)
       |> assign(:player_color, player_color)
+      |> assign(:candidate_color, candidate_color)
+      |> assign(:player_colors, PlayerColors.all())
+      |> assign(:taken_colors, if(room, do: taken_colors(room_id, player_id), else: []))
       |> assign(:player_name, nil)
+      |> assign(:player_name_input, "")
       |> assign(:input_text, "")
       |> assign(:guess_result, nil)
+      |> assign(:typing_by_player, %{})
+      |> assign(:guess_results, %{})
       |> assign(:previous_round, nil)
 
-    {:ok, socket}
+    cond do
+      is_nil(room) ->
+        {:ok,
+         socket
+         |> put_flash(:error, "This room was closed.")
+         |> push_navigate(to: ~p"/")}
+
+      !joinable ->
+        {:ok,
+         socket
+         |> put_flash(:error, "This game is already in progress.")
+         |> push_navigate(to: ~p"/")}
+
+      reservation == {:error, :room_full} ->
+        {:ok,
+         socket
+         |> put_flash(:error, "This room is full.")
+         |> push_navigate(to: ~p"/")}
+
+      reservation == {:error, :game_in_progress} ->
+        {:ok,
+         socket
+         |> put_flash(:error, "This game is already in progress.")
+         |> push_navigate(to: ~p"/")}
+
+      reservation == {:error, :room_closed} ->
+        {:ok,
+         socket
+         |> put_flash(:error, "This room was closed.")
+         |> push_navigate(to: ~p"/")}
+
+      true ->
+        {:ok, socket}
+    end
+  end
+
+  def mount(_params, _session, socket) do
+    {:ok, push_navigate(socket, to: ~p"/")}
+  end
+
+  @impl true
+  def terminate(_reason, socket) do
+    if socket.assigns[:room_id] && socket.assigns[:player_id] do
+      Lobby.leave_room(socket.assigns.room_id, socket.assigns.player_id)
+      Lobby.touch_room(socket.assigns.room_id)
+    end
+
+    :ok
   end
 
   @impl true
   def handle_event("join", %{"player" => %{"name" => name}}, socket) do
     name = name |> String.trim() |> String.slice(0, 20)
 
-    if name == "" do
-      {:noreply, socket}
-    else
-      track_player(socket, name, "", nil)
+    cond do
+      name == "" ->
+        {:noreply, socket}
 
-      {:noreply,
-       socket
-       |> assign(:player_name, name)
-       |> assign(:players, players())}
+      !joinable?(socket.assigns.game_state) ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "This game is already in progress.")
+         |> push_navigate(to: ~p"/")}
+
+      true ->
+        color = socket.assigns.candidate_color
+
+        join_player(socket, name, color)
     end
+  end
+
+  def handle_event("name_change", %{"player" => %{"name" => name}}, socket) do
+    {:noreply, assign(socket, :player_name_input, String.slice(name, 0, 20))}
+  end
+
+  def handle_event("choose_color", %{"color" => color}, socket) do
+    cond do
+      socket.assigns.player_name ->
+        {:noreply, socket}
+
+      !PlayerColors.valid?(color) ->
+        {:noreply, socket}
+
+      color in taken_colors(socket.assigns.room_id, socket.assigns.player_id) ->
+        {:noreply,
+         socket
+         |> assign(:taken_colors, taken_colors(socket.assigns.room_id, socket.assigns.player_id))}
+
+      true ->
+        update_color_selection(socket, color)
+
+        {:noreply,
+         socket
+         |> assign(:candidate_color, color)
+         |> assign(:taken_colors, taken_colors(socket.assigns.room_id, socket.assigns.player_id))}
+    end
+  end
+
+  def handle_event("leave_room", _params, socket) do
+    if socket.assigns.player_name do
+      Presence.untrack(self(), players_topic(socket.assigns.room_id), socket.assigns.player_id)
+    else
+      Presence.untrack(self(), color_topic(socket.assigns.room_id), socket.assigns.player_id)
+    end
+
+    Lobby.leave_room(socket.assigns.room_id, socket.assigns.player_id)
+    Lobby.touch_room(socket.assigns.room_id)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "You left the room.")
+     |> push_navigate(to: ~p"/")}
   end
 
   def handle_event("typing", %{"guess" => %{"text" => text}}, socket) do
     text = String.slice(text, 0, 80)
 
     if socket.assigns.player_name do
-      update_player(socket, text, socket.assigns.guess_result)
+      broadcast_typing(socket, text, socket.assigns.guess_result)
     end
 
     {:noreply, assign(socket, :input_text, text)}
@@ -69,17 +187,32 @@ defmodule LiveTriviaWeb.PlayerLive do
         {:noreply, socket}
 
       true ->
-        result = Game.submit_guess(socket.assigns.player_id, socket.assigns.player_name, text)
+        result =
+          Game.submit_guess(
+            socket.assigns.room_id,
+            socket.assigns.player_id,
+            socket.assigns.player_name,
+            text
+          )
+
         guess_result = result && result.result
         input_text = if guess_result == :correct, do: "", else: socket.assigns.input_text
 
-        update_player(socket, "", guess_result)
+        broadcast_typing(socket, "", guess_result)
 
         {:noreply,
          socket
          |> assign(:guess_result, guess_result)
          |> assign(:input_text, input_text)
-         |> assign(:players, players())}
+         |> assign(
+           :typing_by_player,
+           Map.put(socket.assigns.typing_by_player, socket.assigns.player_id, "")
+         )
+         |> assign(
+           :guess_results,
+           Map.put(socket.assigns.guess_results, socket.assigns.player_id, guess_result)
+         )
+         |> assign(:players, players(socket.assigns.room_id))}
     end
   end
 
@@ -87,11 +220,13 @@ defmodule LiveTriviaWeb.PlayerLive do
   def handle_info({:game_state, game_state}, socket) do
     socket =
       if new_round?(socket.assigns.game_state, game_state) && socket.assigns.player_name do
-        update_player(socket, "", nil)
+        broadcast_typing(socket, "", nil)
 
         socket
         |> assign(:input_text, "")
         |> assign(:guess_result, nil)
+        |> assign(:typing_by_player, %{})
+        |> assign(:guess_results, %{})
       else
         socket
       end
@@ -99,8 +234,32 @@ defmodule LiveTriviaWeb.PlayerLive do
     {:noreply, assign(socket, :game_state, game_state)}
   end
 
-  def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff"}, socket) do
-    {:noreply, assign(socket, :players, players())}
+  def handle_info({:room_closed, _room_id}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "This room was closed.")
+     |> push_navigate(to: ~p"/")}
+  end
+
+  def handle_info(%Phoenix.Socket.Broadcast{topic: topic, event: "presence_diff"}, socket) do
+    cond do
+      topic == players_topic(socket.assigns.room_id) ->
+        Lobby.touch_room(socket.assigns.room_id)
+        {:noreply, assign(socket, :players, players(socket.assigns.room_id))}
+
+      topic == color_topic(socket.assigns.room_id) && !socket.assigns.player_name ->
+        {:noreply, assign_available_color(socket)}
+
+      true ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_info({:player_typing, player_id, text, guess_result}, socket) do
+    {:noreply,
+     socket
+     |> assign(:typing_by_player, Map.put(socket.assigns.typing_by_player, player_id, text))
+     |> assign(:guess_results, Map.put(socket.assigns.guess_results, player_id, guess_result))}
   end
 
   @impl true
@@ -109,17 +268,27 @@ defmodule LiveTriviaWeb.PlayerLive do
     <Layouts.app flash={@flash}>
       <%= if @player_name do %>
         <%= if @game_state.phase == :podium do %>
+          <button
+            phx-click="leave_room"
+            class="fixed right-4 top-4 z-50 rounded-lg border border-gray-700 bg-gray-900/90 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:border-indigo-500"
+          >
+            Leave Room
+          </button>
           <.podium game_state={@game_state} players={@players} />
         <% else %>
-          <.game_stage game_state={@game_state} players={@players} current_player_id={@player_id}>
-            <div
-              :if={@game_state.so_close_player_id}
-              class="absolute left-1/2 top-20 z-50 -translate-x-1/2 animate-bounce"
+          <.game_stage
+            game_state={@game_state}
+            players={@players}
+            current_player_id={@player_id}
+            typing_by_player={@typing_by_player}
+            guess_results={@guess_results}
+          >
+            <button
+              phx-click="leave_room"
+              class="absolute right-4 top-4 z-50 rounded-lg border border-gray-700 bg-gray-900/90 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:border-indigo-500"
             >
-              <div class="rounded-xl bg-yellow-500 px-6 py-3 text-xl font-bold text-black shadow-2xl">
-                So close: {@game_state.so_close_player_name}
-              </div>
-            </div>
+              Leave Room
+            </button>
 
             <div
               :if={@game_state.phase == :standby}
@@ -186,21 +355,52 @@ defmodule LiveTriviaWeb.PlayerLive do
           <div class="text-center">
             <div class="mb-8">
               <div class="mb-4 text-6xl font-black text-indigo-300">?</div>
-              <h1 class="mb-2 text-4xl font-bold">Live Trivia</h1>
-              <p class="text-lg text-gray-400">Real-time trivia</p>
+              <h1 class="mb-2 text-4xl font-bold">{@room.name}</h1>
+              <p class="text-lg text-gray-400">Join as a player</p>
             </div>
-            <.form for={%{}} as={:player} phx-submit="join" class="flex flex-col items-center gap-4">
+            <.form
+              for={%{}}
+              as={:player}
+              phx-change="name_change"
+              phx-submit="join"
+              class="flex flex-col items-center gap-4"
+            >
               <input
                 type="text"
                 name="player[name]"
+                value={@player_name_input}
                 placeholder="Enter your name"
                 maxlength="20"
                 autofocus
                 class="w-72 rounded-xl border border-gray-600 bg-gray-800 px-6 py-3 text-center text-xl text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
               />
+              <div class="w-72">
+                <div class="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+                  Player color
+                </div>
+                <div class="grid grid-cols-8 gap-2">
+                  <button
+                    :for={color <- @player_colors}
+                    type="button"
+                    phx-click="choose_color"
+                    phx-value-color={color}
+                    disabled={color in @taken_colors}
+                    class={[
+                      "h-8 rounded-full border-2 transition disabled:cursor-not-allowed disabled:opacity-25",
+                      color == @candidate_color &&
+                        "scale-110 border-white shadow-[0_0_18px_rgba(255,255,255,0.35)]",
+                      color != @candidate_color && "border-gray-800 hover:border-white/70"
+                    ]}
+                    style={"background-color: #{color};"}
+                    aria-label={"Choose #{color}"}
+                  >
+                  </button>
+                </div>
+              </div>
               <button
                 type="submit"
-                class="rounded-xl bg-indigo-600 px-8 py-3 text-lg font-bold text-white transition-colors hover:bg-indigo-500"
+                disabled={is_nil(@candidate_color)}
+                class="rounded-xl bg-indigo-600 px-8 py-3 text-lg font-bold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Join Game
               </button>
@@ -212,31 +412,203 @@ defmodule LiveTriviaWeb.PlayerLive do
     """
   end
 
-  defp track_player(socket, name, typing_text, guess_result) do
-    Presence.track(self(), @players_topic, socket.assigns.player_id, %{
+  defp track_player(socket, name) do
+    Presence.track(self(), players_topic(socket.assigns.room_id), socket.assigns.player_id, %{
       player_id: socket.assigns.player_id,
       name: name,
-      color: socket.assigns.player_color,
-      typing_text: typing_text,
-      guess_result: guess_result,
+      color: socket.assigns.candidate_color,
       joined_at: System.system_time(:millisecond)
     })
   end
 
-  defp update_player(socket, typing_text, guess_result) do
-    Presence.update(self(), @players_topic, socket.assigns.player_id, fn meta ->
-      meta
-      |> Map.put(:typing_text, typing_text)
-      |> Map.put(:guess_result, guess_result)
-    end)
+  defp reserve_player_slot(socket, room, true, room_id, player_id) do
+    if connected?(socket) && room do
+      Lobby.reserve_player(room_id, player_id)
+    else
+      :ok
+    end
   end
 
-  defp players do
-    @players_topic
+  defp reserve_player_slot(_socket, _room, _joinable, _room_id, _player_id), do: :ok
+
+  defp join_player(socket, _name, color)
+       when not is_binary(color) do
+    {:noreply, assign_available_color(socket)}
+  end
+
+  defp join_player(socket, name, color) do
+    room_id = socket.assigns.room_id
+    player_id = socket.assigns.player_id
+
+    case Lobby.join_room(room_id, player_id, name, color) do
+      :ok ->
+        case track_player(socket, name) do
+          {:ok, _ref} ->
+            Presence.untrack(self(), color_topic(room_id), player_id)
+            Lobby.touch_room(room_id)
+
+            {:noreply,
+             socket
+             |> assign(:player_name, name)
+             |> assign(:player_color, color)
+             |> assign(:taken_colors, taken_colors(room_id, player_id))
+             |> assign(:players, players(room_id))}
+
+          {:error, _reason} ->
+            Lobby.leave_room(room_id, player_id)
+
+            {:noreply,
+             socket
+             |> put_flash(:error, "Could not join this room. Try again.")
+             |> assign_available_color()}
+        end
+
+      {:error, :room_full} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "This room is full.")
+         |> assign_available_color()}
+
+      {:error, :color_taken} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "That color was just taken.")
+         |> assign_available_color()}
+
+      {:error, :game_in_progress} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "This game is already in progress.")
+         |> push_navigate(to: ~p"/")}
+
+      {:error, :room_closed} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "This room was closed.")
+         |> push_navigate(to: ~p"/")}
+
+      {:error, _reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Could not join this room.")
+         |> assign_available_color()}
+    end
+  end
+
+  defp broadcast_typing(socket, typing_text, guess_result) do
+    Phoenix.PubSub.broadcast(
+      LiveTrivia.PubSub,
+      typing_topic(socket.assigns.room_id),
+      {:player_typing, socket.assigns.player_id, typing_text, guess_result}
+    )
+  end
+
+  defp players(room_id) do
+    room_id
+    |> players_topic()
     |> Presence.list()
     |> Enum.map(fn {player_id, %{metas: [meta | _]}} -> Map.put(meta, :player_id, player_id) end)
     |> Enum.sort_by(& &1.joined_at)
   end
+
+  defp players_topic(room_id), do: "players:#{room_id}"
+  defp room_topic(room_id), do: "room:#{room_id}"
+  defp color_topic(room_id), do: "color_select:#{room_id}"
+  defp typing_topic(room_id), do: "typing:#{room_id}"
+
+  defp track_color_selection(_room_id, _player_id, nil), do: :ok
+
+  defp track_color_selection(room_id, player_id, color) do
+    Presence.track(self(), color_topic(room_id), player_id, %{
+      color: color,
+      selected_at: System.system_time(:millisecond)
+    })
+  end
+
+  defp update_color_selection(socket, color) do
+    case Presence.update(
+           self(),
+           color_topic(socket.assigns.room_id),
+           socket.assigns.player_id,
+           fn meta ->
+             Map.put(meta, :color, color)
+           end
+         ) do
+      {:ok, _ref} ->
+        :ok
+
+      {:error, _reason} ->
+        track_color_selection(socket.assigns.room_id, socket.assigns.player_id, color)
+    end
+  end
+
+  defp initial_color(nil, _player_id, fallback), do: fallback
+
+  defp initial_color(room_id, player_id, fallback) do
+    taken = taken_colors(room_id, player_id)
+
+    cond do
+      PlayerColors.valid?(fallback) && fallback not in taken -> fallback
+      true -> Enum.find(PlayerColors.all(), &(&1 not in taken))
+    end
+  end
+
+  defp assign_available_color(socket) do
+    taken = taken_colors(socket.assigns.room_id, socket.assigns.player_id)
+    color = socket.assigns.candidate_color
+
+    color =
+      if PlayerColors.valid?(color) && color not in taken do
+        color
+      else
+        Enum.find(PlayerColors.all(), &(&1 not in taken))
+      end
+
+    if color && color != socket.assigns.candidate_color do
+      update_color_selection(socket, color)
+    end
+
+    socket
+    |> assign(:candidate_color, color)
+    |> assign(:taken_colors, taken_colors(socket.assigns.room_id, socket.assigns.player_id))
+  end
+
+  defp taken_colors(nil, _player_id), do: []
+
+  defp taken_colors(room_id, player_id) do
+    player_colors =
+      room_id
+      |> players_topic()
+      |> Presence.list()
+      |> Enum.flat_map(fn
+        {^player_id, _presence} ->
+          []
+
+        {_id, %{metas: metas}} ->
+          Enum.map(metas, & &1.color)
+      end)
+
+    selected_colors =
+      room_id
+      |> color_topic()
+      |> Presence.list()
+      |> Enum.flat_map(fn
+        {^player_id, _presence} ->
+          []
+
+        {_id, %{metas: metas}} ->
+          Enum.map(metas, & &1.color)
+      end)
+
+    reserved_colors = Lobby.taken_player_colors(room_id, player_id)
+
+    (reserved_colors ++ player_colors ++ selected_colors)
+    |> Enum.filter(&PlayerColors.valid?/1)
+    |> Enum.uniq()
+  end
+
+  defp joinable?(%{phase: phase}), do: phase in [:standby, :loaded, :podium]
+  defp joinable?(_game_state), do: false
 
   defp new_round?(old_state, new_state) do
     old_state.current_index != new_state.current_index ||

@@ -2,7 +2,7 @@ defmodule LiveTrivia.Game do
   use GenServer
 
   @topic "game"
-  @hint_times [10, 15, 20, 25, 28]
+  @hint_times [5, 10, 15, 20, 25]
   @round_duration_ms 30_000
   @results_duration_ms 3_000
 
@@ -15,22 +15,29 @@ defmodule LiveTrivia.Game do
               player_scores: %{},
               closest_guess: nil,
               round_winner: nil,
-              so_close_player_id: nil,
-              so_close_player_name: nil,
               timer_ref: nil,
               hint_refs: []
   end
 
-  def start_link(_opts), do: GenServer.start_link(__MODULE__, %State{}, name: __MODULE__)
-  def subscribe, do: Phoenix.PubSub.subscribe(LiveTrivia.PubSub, @topic)
-  def get_state, do: GenServer.call(__MODULE__, :get_state)
-  def load_questions(questions), do: GenServer.call(__MODULE__, {:load_questions, questions})
-  def start_quiz, do: GenServer.call(__MODULE__, :start_quiz)
-  def next_round, do: GenServer.call(__MODULE__, :next_round)
-  def force_reset, do: GenServer.call(__MODULE__, :force_reset)
+  def child_spec(opts) do
+    room_id = Keyword.fetch!(opts, :room_id)
+    %{id: {__MODULE__, room_id}, start: {__MODULE__, :start_link, [opts]}}
+  end
 
-  def submit_guess(player_id, player_name, guess_text),
-    do: GenServer.call(__MODULE__, {:submit_guess, player_id, player_name, guess_text})
+  def start_link(opts) do
+    room_id = Keyword.fetch!(opts, :room_id)
+    GenServer.start_link(__MODULE__, %State{}, name: via(room_id))
+  end
+
+  def subscribe(room_id), do: Phoenix.PubSub.subscribe(LiveTrivia.PubSub, topic(room_id))
+  def get_state(room_id), do: GenServer.call(via(room_id), :get_state)
+  def load_questions(room_id, questions), do: call(room_id, {:load_questions, questions})
+  def start_quiz(room_id), do: call(room_id, :start_quiz)
+  def next_round(room_id), do: call(room_id, :next_round)
+  def force_reset(room_id), do: call(room_id, :force_reset)
+
+  def submit_guess(room_id, player_id, player_name, guess_text),
+    do: call(room_id, {:submit_guess, player_id, player_name, guess_text})
 
   @impl true
   def init(state), do: {:ok, state}
@@ -39,6 +46,8 @@ defmodule LiveTrivia.Game do
   def handle_call(:get_state, _from, state), do: {:reply, public_state(state), state}
 
   def handle_call({:load_questions, questions}, _from, state) do
+    touch_room()
+
     state =
       state
       |> cancel_timers()
@@ -54,6 +63,7 @@ defmodule LiveTrivia.Game do
   end
 
   def handle_call(:start_quiz, _from, %{phase: :loaded, questions: [_ | _]} = state) do
+    touch_room()
     state = start_round(%{state | current_index: 0})
     broadcast(state)
     {:reply, :ok, state}
@@ -62,12 +72,14 @@ defmodule LiveTrivia.Game do
   def handle_call(:start_quiz, _from, state), do: {:reply, :ignored, state}
 
   def handle_call(:next_round, _from, state) do
+    touch_room()
     state = advance_round(state, state.current_index)
     broadcast(state)
     {:reply, :ok, state}
   end
 
   def handle_call(:force_reset, _from, state) do
+    touch_room()
     cancel_timers(state)
     state = %State{}
     broadcast(state)
@@ -83,6 +95,7 @@ defmodule LiveTrivia.Game do
       do: {:reply, nil, state}
 
   def handle_call({:submit_guess, player_id, player_name, guess_text}, _from, state) do
+    touch_room()
     question = Enum.at(state.questions, state.current_index)
     distance = levenshtein(normalize(guess_text), normalize(question.answer))
     result = guess_result(distance)
@@ -113,8 +126,6 @@ defmodule LiveTrivia.Game do
               score: score,
               is_consolation: false
             },
-            so_close_player_id: nil,
-            so_close_player_name: nil,
             timer_ref: schedule_advance(state.current_index),
             hint_refs: []
         }
@@ -123,10 +134,7 @@ defmodule LiveTrivia.Game do
       else
         state = %{
           state
-          | closest_guess: closest_guess,
-            so_close_player_id: if(distance <= 2, do: player_id, else: state.so_close_player_id),
-            so_close_player_name:
-              if(distance <= 2, do: player_name, else: state.so_close_player_name)
+          | closest_guess: closest_guess
         }
 
         {%{result: result, distance: distance}, state}
@@ -196,8 +204,6 @@ defmodule LiveTrivia.Game do
         revealed_hints: 0,
         closest_guess: nil,
         round_winner: nil,
-        so_close_player_id: nil,
-        so_close_player_name: nil,
         timer_ref:
           Process.send_after(self(), {:round_timeout, state.current_index}, @round_duration_ms),
         hint_refs: hint_refs
@@ -240,9 +246,6 @@ defmodule LiveTrivia.Game do
     []
   end
 
-  defp broadcast(state),
-    do: Phoenix.PubSub.broadcast(LiveTrivia.PubSub, @topic, {:game_state, public_state(state)})
-
   defp public_state(state) do
     state
     |> Map.take([
@@ -253,9 +256,7 @@ defmodule LiveTrivia.Game do
       :revealed_hints,
       :player_scores,
       :closest_guess,
-      :round_winner,
-      :so_close_player_id,
-      :so_close_player_name
+      :round_winner
     ])
     |> Map.put(:server_now, now_ms())
   end
@@ -306,6 +307,33 @@ defmodule LiveTrivia.Game do
       Enum.reverse(row)
     end)
     |> List.last()
+  end
+
+  defp call(room_id, message), do: GenServer.call(via(room_id), message)
+  defp via(room_id), do: {:via, Registry, {LiveTrivia.GameRegistry, room_id}}
+  defp topic(room_id), do: "#{@topic}:#{room_id}"
+
+  defp room_id do
+    case Registry.keys(LiveTrivia.GameRegistry, self()) do
+      [room_id | _] -> room_id
+      [] -> nil
+    end
+  end
+
+  defp broadcast(state) do
+    if room_id = room_id() do
+      Phoenix.PubSub.broadcast(
+        LiveTrivia.PubSub,
+        topic(room_id),
+        {:game_state, public_state(state)}
+      )
+
+      LiveTrivia.Lobby.room_state_changed(room_id, state.phase)
+    end
+  end
+
+  defp touch_room do
+    if room_id = room_id(), do: LiveTrivia.Lobby.touch_room(room_id)
   end
 
   defp now_ms, do: System.system_time(:millisecond)
