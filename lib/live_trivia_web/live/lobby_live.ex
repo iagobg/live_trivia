@@ -3,15 +3,19 @@ defmodule LiveTriviaWeb.LobbyLive do
 
   alias LiveTrivia.Lobby
 
-  @impl true
+@impl true
   def mount(_params, session, socket) do
-    if connected?(socket), do: Lobby.subscribe()
+    if connected?(socket) do
+      Lobby.subscribe()
+      # Trigger the deferred load for the initial connection
+      send(self(), :load_rooms) 
+    end
 
     {:ok,
      socket
      |> assign(:page_title, "Live Trivia Lobby")
      |> assign(:player_id, Map.fetch!(session, "player_id"))
-     |> assign(:rooms, Lobby.list_rooms())
+     |> assign(:rooms, []) # Fast, empty initial state for Lighthouse/TTFB
      |> assign(:room_name, "")
      |> assign(:error, nil)}
   end
@@ -25,6 +29,11 @@ defmodule LiveTriviaWeb.LobbyLive do
       {:error, :room_limit} ->
         {:noreply, assign(socket, :error, "Room limit reached. Try again soon.")}
     end
+  end
+
+  @impl true
+  def handle_info(:load_rooms, socket) do
+    {:noreply, assign(socket, :rooms, Lobby.list_rooms())}
   end
 
   @impl true
