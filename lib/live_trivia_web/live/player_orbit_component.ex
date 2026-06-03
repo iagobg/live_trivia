@@ -1,6 +1,9 @@
 defmodule LiveTriviaWeb.PlayerOrbitComponent do
   use LiveTriviaWeb, :live_component
 
+  alias LiveTriviaWeb.ResultColors
+  alias LiveTriviaWeb.TypingBubble
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -37,12 +40,28 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
           {@score} pts
         </div>
       </div>
-      <div
-        :if={@typing_text != ""}
-        class="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap"
-      >
-        <div class="max-w-32 truncate rounded-lg border border-gray-700 bg-gray-800/90 px-2 py-1 text-xs text-gray-300">
-          {@typing_text}
+      <div class="absolute -bottom-8 left-1/2 h-44 w-32 -translate-x-1/2 whitespace-nowrap">
+        <TypingBubble.typing_bubble
+          :for={
+            {bubble, index} <-
+              Enum.with_index(TypingBubble.submitted_bubbles(@typing))
+          }
+          id={"desktop-submitted-bubble-#{@player.player_id}-#{bubble.id}"}
+          player={@player}
+          text={TypingBubble.text(bubble)}
+          submitted
+          class={[
+            "absolute inset-x-0 top-0 w-32 max-w-32 rounded-lg px-2 py-1 text-xs",
+            submitted_bubble_z_index(index)
+          ]}
+        />
+        <div :if={TypingBubble.active_text(@typing) != ""} class="absolute left-0 top-0 z-[60]">
+          <TypingBubble.typing_bubble
+            id={"desktop-live-bubble-#{@player.player_id}"}
+            player={@player}
+            text={TypingBubble.active_text(@typing)}
+            class="w-32 max-w-32 rounded-lg px-2 py-1 text-xs"
+          />
         </div>
       </div>
     </div>
@@ -56,20 +75,14 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
     "left: #{x}%; top: #{y}%;"
   end
 
-  defp result_color(:correct, _color), do: "#22c55e"
-  defp result_color(:close, _color), do: "#eab308"
-  defp result_color(:near, _color), do: "#f97316"
-  defp result_color(:far, _color), do: "#ef4444"
-  defp result_color(_result, color), do: color
-
   defp player_avatar_style(player, guess_result, true) do
-    border = result_color(guess_result, player.color)
+    border = ResultColors.result_color(guess_result, player.color)
 
     "background-color: #{player.color}33; border-color: #{border}; box-shadow: 0 0 0 5px #{player.color}44, 0 0 34px #{player.color}dd;"
   end
 
   defp player_avatar_style(player, guess_result, _leading) do
-    border = result_color(guess_result, player.color)
+    border = ResultColors.result_color(guess_result, player.color)
     "background-color: #{player.color}33; border-color: #{border};"
   end
 
@@ -78,4 +91,9 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
   defp result_shadow(:near), do: "shadow-[0_0_28px_rgba(249,115,22,0.8)]"
   defp result_shadow(:far), do: "shadow-[0_0_28px_rgba(239,68,68,0.8)]"
   defp result_shadow(_result), do: nil
+
+  defp submitted_bubble_z_index(index) do
+    ["z-10", "z-20", "z-30", "z-40", "z-50"]
+    |> Enum.at(index, "z-10")
+  end
 end

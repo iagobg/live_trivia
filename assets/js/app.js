@@ -102,21 +102,124 @@ Hooks.PlayerProfileForm = {
 
 Hooks.GuessInputFocus = {
   mounted() {
+    this.onSubmit = this.onSubmit.bind(this)
+    this.onInput = this.onInput.bind(this)
+    this.onFocusOut = this.onFocusOut.bind(this)
+    this.recentlySubmittedText = null
+    this.localSubmittedCount = this.submittedCount()
+    this.focusFrame = null
+
+    this.el.addEventListener("submit", this.onSubmit)
+    this.el.addEventListener("input", this.onInput)
+    this.el.addEventListener("focusout", this.onFocusOut)
+    this.handleEvent("guess-limit", () => this.shakeInput())
     this.focusInput()
   },
 
   updated() {
+    this.localSubmittedCount = this.submittedCount()
+    this.clearRehydratedSubmit()
     this.focusInput()
   },
 
-  focusInput() {
-    requestAnimationFrame(() => {
-      const input = this.el.querySelector("input[name='guess[text]']")
+  destroyed() {
+    if (this.focusFrame) cancelAnimationFrame(this.focusFrame)
+
+    this.el.removeEventListener("submit", this.onSubmit)
+    this.el.removeEventListener("input", this.onInput)
+    this.el.removeEventListener("focusout", this.onFocusOut)
+  },
+
+  onSubmit() {
+    const input = this.guessInput()
+
+    if (!input) return
+
+    this.focusInput(true)
+
+    if (this.submitWouldHitLimit()) return
+
+    const submittedText = input.value.trim()
+
+    if (!submittedText) return
+
+    this.recentlySubmittedText = submittedText
+    this.localSubmittedCount = Math.min(this.maxSubmittedCount(), this.localSubmittedCount + 1)
+
+    setTimeout(() => {
+      const currentInput = this.guessInput()
+
+      if (currentInput && currentInput.value.trim() === submittedText) {
+        currentInput.value = ""
+      }
+
+      this.focusInput(true)
+    }, 0)
+  },
+
+  onInput() {
+    const input = this.guessInput()
+
+    if (input && input.value.trim() !== "") {
+      this.recentlySubmittedText = null
+    }
+  },
+
+  clearRehydratedSubmit() {
+    const input = this.guessInput()
+
+    if (
+      input &&
+      this.recentlySubmittedText &&
+      input.value.trim() === this.recentlySubmittedText
+    ) {
+      input.value = ""
+    }
+  },
+
+  onFocusOut() {
+    this.focusInput()
+  },
+
+  focusInput(force = false) {
+    if (this.focusFrame) return
+
+    this.focusFrame = requestAnimationFrame(() => {
+      this.focusFrame = null
+      const input = this.guessInput()
 
       if (!input || input.disabled) return
+      if (!force && document.activeElement === input) return
 
       input.focus({preventScroll: true})
     })
+  },
+
+  shakeInput() {
+    const input = this.guessInput()
+
+    if (!input) return
+
+    input.classList.remove("guess-limit-shake")
+    void input.offsetWidth
+    input.classList.add("guess-limit-shake")
+    input.focus({preventScroll: true})
+  },
+
+  submitWouldHitLimit() {
+    return this.localSubmittedCount >= this.maxSubmittedCount()
+  },
+
+  submittedCount() {
+    return Number(this.el.dataset.submittedCount || 0)
+  },
+
+  maxSubmittedCount() {
+    return Number(this.el.dataset.maxSubmittedBubbles || 5)
+  },
+
+  guessInput() {
+    return this.el.querySelector("input[name='guess[text]']")
   },
 }
 
@@ -139,12 +242,67 @@ Hooks.HintTicker = {
     this.content.style.removeProperty("--hint-duration")
 
     requestAnimationFrame(() => {
-      const overflow = this.content.scrollWidth - this.el.clientWidth
+      const styles = window.getComputedStyle(this.el)
+      const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight)
+      const availableWidth = this.el.clientWidth - horizontalPadding
+      const overflow = this.content.scrollWidth - availableWidth
 
       if (overflow <= 4) return
 
       this.content.style.setProperty("--hint-overflow", `${overflow}px`)
       this.content.style.setProperty("--hint-duration", "4s")
+      this.el.classList.add("is-scrolling")
+    })
+  },
+}
+
+Hooks.TypingBubble = {
+  mounted() {
+    this.content = this.el.querySelector(".typing-bubble-content")
+    this.lastMeasureKey = null
+    this.updateBubble()
+  },
+
+  updated() {
+    this.content = this.el.querySelector(".typing-bubble-content")
+    this.updateBubble()
+  },
+
+  updateBubble() {
+    if (!this.content) return
+
+    const text = this.content.textContent || ""
+    const width = this.el.clientWidth
+    const isSubmitted = this.el.classList.contains("is-submitted")
+    const measureKey = `${text}:${width}:${isSubmitted}`
+
+    if (measureKey === this.lastMeasureKey) return
+
+    this.lastMeasureKey = measureKey
+    this.el.classList.remove("is-scrolling")
+    this.el.classList.remove("is-overflowing")
+    this.content.style.removeProperty("--typing-overflow")
+    this.content.style.removeProperty("--typing-duration")
+
+    requestAnimationFrame(() => {
+      const styles = window.getComputedStyle(this.el)
+      const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight)
+      const availableWidth = this.el.clientWidth - horizontalPadding
+      const overflow = this.content.scrollWidth - availableWidth
+
+      if (overflow <= 4) return
+
+      this.el.classList.add("is-overflowing")
+
+      if (
+        !this.el.classList.contains("is-submitted") ||
+        !this.el.classList.contains("is-animated")
+      ) {
+        return
+      }
+
+      this.content.style.setProperty("--typing-overflow", `${overflow}px`)
+      this.content.style.setProperty("--typing-duration", "2s")
       this.el.classList.add("is-scrolling")
     })
   },

@@ -217,7 +217,7 @@ defmodule LiveTrivia.Lobby do
   end
 
   def handle_cast({:admin_left, room_id}, rooms) do
-    phase = room_phase(room_id)
+    phase = room_phase(safe_game_state(room_id))
     rooms = maybe_close_for_occupancy(rooms, room_id, phase)
     broadcast_rooms(rooms)
     {:noreply, rooms}
@@ -361,11 +361,14 @@ defmodule LiveTrivia.Lobby do
     rooms
     |> Map.values()
     |> Enum.map(fn room ->
+      game_state = safe_game_state(room.id)
+
       %{
         id: room.id,
         name: room.name,
         admin_id: room.admin_id,
-        phase: room_phase(room.id),
+        phase: room_phase(game_state),
+        round_label: round_label(game_state),
         joinable: joinable?(room.id),
         password_protected?: not is_nil(room.password_hash),
         player_count: max(player_count(room.id), map_size(room.player_colors)),
@@ -380,12 +383,19 @@ defmodule LiveTrivia.Lobby do
     Phoenix.PubSub.broadcast(LiveTrivia.PubSub, @topic, {:rooms_updated, public_rooms(rooms)})
   end
 
-  defp room_phase(room_id) do
-    case safe_game_state(room_id) do
+  defp room_phase(game_state) do
+    case game_state do
       %{phase: phase} -> phase
       _ -> :closed
     end
   end
+
+  defp round_label(%{phase: phase, current_index: index, questions: questions})
+       when phase in [:in_progress, :results] and length(questions) > 0 do
+    "Round #{min(index + 1, length(questions))}/#{length(questions)}"
+  end
+
+  defp round_label(_game_state), do: nil
 
   defp safe_game_state(room_id) do
     LiveTrivia.Game.get_state(room_id)

@@ -5,7 +5,11 @@ defmodule LiveTriviaWeb.PlayerLive do
   alias LiveTrivia.Lobby
   alias LiveTrivia.PlayerColors
   alias LiveTriviaWeb.Presence
+  alias LiveTriviaWeb.TypingBubble
   import LiveTriviaWeb.TriviaComponents
+
+  @submitted_clear_delay_ms 2_000
+  @max_visible_bubbles_per_player 5
 
   @impl true
   def mount(%{"room_id" => room_id}, session, socket) do
@@ -190,24 +194,48 @@ defmodule LiveTriviaWeb.PlayerLive do
   def handle_event("typing", %{"guess" => %{"text" => text}}, socket) do
     text = String.slice(text, 0, 80)
 
-    if socket.assigns.player_name do
-      broadcast_typing(socket, text, socket.assigns.guess_result)
-    end
+    socket =
+      if socket.assigns.player_name do
+        typing_by_player =
+          TypingBubble.update_player_bubbles(
+            socket.assigns.typing_by_player,
+            socket.assigns.player_id,
+            :typing,
+            text,
+            nil
+          )
+
+        broadcast_typing(socket, text, socket.assigns.guess_result, :typing)
+        assign(socket, :typing_by_player, typing_by_player)
+      else
+        socket
+      end
 
     {:noreply, assign(socket, :input_text, text)}
   end
+
+  def handle_event("typing", %{"guess" => text}, socket) when is_binary(text) do
+    handle_event("typing", %{"guess" => %{"text" => text}}, socket)
+  end
+
+  def handle_event("typing", _params, socket), do: {:noreply, socket}
 
   def handle_event("submit_guess", %{"guess" => %{"text" => text}}, socket) do
     text = String.trim(text)
 
     cond do
       socket.assigns.game_state.phase != :in_progress ->
-        {:noreply, socket}
+        {:noreply, clear_guess_input(socket)}
 
       text == "" ->
         {:noreply, socket}
 
+      current_player_bubble_count(socket) >= @max_visible_bubbles_per_player ->
+        {:noreply, push_event(socket, "guess-limit", %{})}
+
       true ->
+        bubble_id = submitted_bubble_id()
+
         result =
           Game.submit_guess(
             socket.assigns.room_id,
@@ -218,7 +246,13 @@ defmodule LiveTriviaWeb.PlayerLive do
 
         guess_result = result && result.result
 
-        broadcast_typing(socket, "", guess_result)
+        broadcast_typing(socket, text, guess_result, :submitted, bubble_id)
+
+        Process.send_after(
+          self(),
+          {:clear_submitted_typing, socket.assigns.player_id, bubble_id},
+          @submitted_clear_delay_ms
+        )
 
         {:noreply,
          socket
@@ -226,7 +260,13 @@ defmodule LiveTriviaWeb.PlayerLive do
          |> assign(:input_text, "")
          |> assign(
            :typing_by_player,
-           Map.put(socket.assigns.typing_by_player, socket.assigns.player_id, "")
+           TypingBubble.update_player_bubbles(
+             socket.assigns.typing_by_player,
+             socket.assigns.player_id,
+             :submitted,
+             text,
+             bubble_id
+           )
          )
          |> assign(
            :guess_results,
@@ -240,7 +280,7 @@ defmodule LiveTriviaWeb.PlayerLive do
   def handle_info({:game_state, game_state}, socket) do
     socket =
       if new_round?(socket.assigns.game_state, game_state) && socket.assigns.player_name do
-        broadcast_typing(socket, "", nil)
+        broadcast_typing(socket, "", nil, :typing)
 
         socket
         |> assign(:input_text, "")
@@ -275,15 +315,102 @@ defmodule LiveTriviaWeb.PlayerLive do
     end
   end
 
-  def handle_info({:player_typing, player_id, text, guess_result}, socket) do
+  def handle_info({:clear_submitted_typing, player_id, bubble_id}, socket) do
+    broadcast_typing(socket, "", nil, :remove_submitted, bubble_id)
+
     {:noreply,
-     socket
-     |> assign(:typing_by_player, Map.put(socket.assigns.typing_by_player, player_id, text))
-     |> assign(:guess_results, Map.put(socket.assigns.guess_results, player_id, guess_result))}
+     assign(
+       socket,
+       :typing_by_player,
+       TypingBubble.update_player_bubbles(
+         socket.assigns.typing_by_player,
+         player_id,
+         :remove_submitted,
+         "",
+         bubble_id
+       )
+     )}
+  end
+
+  def handle_info({:player_typing, player_id, text, guess_result}, socket) do
+    handle_info({:player_typing, player_id, text, guess_result, :typing}, socket)
+  end
+
+  def handle_info({:player_typing, player_id, text, guess_result, mode}, socket) do
+    handle_info({:player_typing, player_id, text, guess_result, mode, nil}, socket)
+  end
+
+  def handle_info({:player_typing, player_id, text, guess_result, mode, bubble_id}, socket) do
+    typing_by_player =
+      TypingBubble.update_player_bubbles(
+        socket.assigns.typing_by_player,
+        player_id,
+        mode,
+        text,
+        bubble_id
+      )
+
+    socket = assign(socket, :typing_by_player, typing_by_player)
+
+    socket =
+      if mode == :remove_submitted do
+        socket
+      else
+        assign(
+          socket,
+          :guess_results,
+          Map.put(socket.assigns.guess_results, player_id, guess_result)
+        )
+      end
+
+    {:noreply, socket}
+  end
+
+  defp current_player_bubble_count(%Phoenix.LiveView.Socket{assigns: assigns}) do
+    current_player_bubble_count(assigns)
+  end
+
+  defp current_player_bubble_count(assigns) do
+    assigns.typing_by_player
+    |> Map.get(assigns.player_id)
+    |> TypingBubble.submitted_count()
+  end
+
+  defp submitted_bubble_id do
+    System.unique_integer([:positive, :monotonic])
+    |> Integer.to_string()
+  end
+
+  defp clear_guess_input(socket) do
+    socket =
+      if socket.assigns.player_name do
+        broadcast_typing(socket, "", socket.assigns.guess_result, :typing)
+
+        assign(
+          socket,
+          :typing_by_player,
+          TypingBubble.update_player_bubbles(
+            socket.assigns.typing_by_player,
+            socket.assigns.player_id,
+            :typing,
+            "",
+            nil
+          )
+        )
+      else
+        socket
+      end
+
+    assign(socket, :input_text, "")
   end
 
   @impl true
   def render(assigns) do
+    assigns =
+      assigns
+      |> assign(:current_player_bubble_count, current_player_bubble_count(assigns))
+      |> assign(:max_visible_bubbles_per_player, @max_visible_bubbles_per_player)
+
     ~H"""
     <Layouts.app flash={@flash}>
       <%= if @player_name do %>
@@ -330,7 +457,7 @@ defmodule LiveTriviaWeb.PlayerLive do
 
             <div
               :if={@game_state.phase in [:in_progress, :results]}
-              class="absolute bottom-8 left-1/2 z-20 w-full max-w-md -translate-x-1/2 px-4"
+              class="fixed inset-x-0 bottom-0 z-30 w-full bg-gradient-to-t from-gray-950 via-gray-950/95 to-transparent px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-5 sm:absolute sm:bottom-8 sm:left-1/2 sm:max-w-md sm:-translate-x-1/2 sm:bg-none sm:p-0 sm:px-4"
             >
               <div
                 :if={@game_state.phase == :results && @game_state.round_winner}
@@ -355,6 +482,8 @@ defmodule LiveTriviaWeb.PlayerLive do
                 phx-change="typing"
                 phx-submit="submit_guess"
                 phx-hook="GuessInputFocus"
+                data-submitted-count={@current_player_bubble_count}
+                data-max-submitted-bubbles={@max_visible_bubbles_per_player}
               >
                 <div class="relative">
                   <input
@@ -364,6 +493,7 @@ defmodule LiveTriviaWeb.PlayerLive do
                     disabled={!can_input?(@game_state, @guess_result)}
                     placeholder={guess_placeholder(@game_state, @guess_result)}
                     autocomplete="off"
+                    phx-throttle="80"
                     class={[
                       "w-full rounded-xl border-2 py-4 pl-5 pr-24 text-lg font-medium text-white outline-none transition-all disabled:cursor-not-allowed disabled:opacity-50",
                       input_result_class(@guess_result)
@@ -382,12 +512,14 @@ defmodule LiveTriviaWeb.PlayerLive do
           </.game_stage>
         <% end %>
       <% else %>
-        <main class="flex min-h-screen items-center justify-center bg-gray-950 px-4 text-white">
+        <main class="flex min-h-[100svh] items-center justify-center bg-gray-950 px-4 py-8 pb-[calc(env(safe-area-inset-bottom)+2rem)] text-white sm:min-h-screen">
           <%= if @room_password_required? && !@room_unlocked? do %>
             <div class="w-full max-w-sm text-center">
-              <div class="mb-8">
-                <div class="mb-4 text-6xl font-black text-amber-300">🔒</div>
-                <h1 class="mb-2 text-4xl font-bold">{@room.name}</h1>
+              <div class="mb-6 sm:mb-8">
+                <div class="mb-4 text-sm font-black uppercase tracking-[0.22em] text-amber-300">
+                  Locked room
+                </div>
+                <h1 class="mb-2 text-3xl font-bold sm:text-4xl">{@room.name}</h1>
                 <p class="text-lg text-gray-400">Enter the room password</p>
               </div>
 
@@ -397,14 +529,16 @@ defmodule LiveTriviaWeb.PlayerLive do
                 phx-submit="unlock_room"
                 class="flex flex-col items-center gap-4"
               >
-                <input
-                  type="password"
-                  name="room[password]"
-                  placeholder="Room password"
-                  maxlength="80"
-                  autofocus
-                  class="w-72 rounded-xl border border-gray-600 bg-gray-800 px-6 py-3 text-center text-xl text-white outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
-                />
+                <div class="w-full max-w-xs">
+                  <input
+                    type="password"
+                    name="room[password]"
+                    placeholder="Room password"
+                    maxlength="80"
+                    autofocus
+                    class="w-full rounded-xl border border-gray-600 bg-gray-800 px-6 py-3 text-center text-xl text-white outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                  />
+                </div>
                 <div :if={@room_password_error} class="text-sm font-semibold text-red-300">
                   {@room_password_error}
                 </div>
@@ -414,10 +548,10 @@ defmodule LiveTriviaWeb.PlayerLive do
               </.form>
             </div>
           <% else %>
-            <div class="text-center">
-              <div class="mb-8">
+            <div class="w-full max-w-sm text-center">
+              <div class="mb-6 sm:mb-8">
                 <div class="mb-4 text-6xl font-black text-indigo-300">?</div>
-                <h1 class="mb-2 text-4xl font-bold">{@room.name}</h1>
+                <h1 class="mb-2 text-3xl font-bold sm:text-4xl">{@room.name}</h1>
                 <p class="text-lg text-gray-400">Join as a player</p>
               </div>
               <.form
@@ -434,13 +568,13 @@ defmodule LiveTriviaWeb.PlayerLive do
                   placeholder="Enter your name"
                   maxlength="20"
                   autofocus
-                  class="w-72 rounded-xl border border-gray-600 bg-gray-800 px-6 py-3 text-center text-xl text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                  class="w-full max-w-xs rounded-xl border border-gray-600 bg-gray-800 px-6 py-3 text-center text-xl text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
                 />
-                <div class="w-72">
+                <div class="w-full max-w-xs">
                   <div class="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
                     Player color
                   </div>
-                  <div class="grid grid-cols-8 gap-2">
+                  <div class="grid grid-cols-8 gap-2.5 sm:gap-2">
                     <button
                       :for={color <- @player_colors}
                       type="button"
@@ -448,7 +582,7 @@ defmodule LiveTriviaWeb.PlayerLive do
                       phx-value-color={color}
                       disabled={color in @taken_colors}
                       class={[
-                        "h-8 rounded-full border-2 transition disabled:cursor-not-allowed disabled:opacity-25",
+                        "h-9 rounded-full border-2 transition disabled:cursor-not-allowed disabled:opacity-25 sm:h-8",
                         color == @candidate_color &&
                           "scale-110 border-white shadow-[0_0_18px_rgba(255,255,255,0.35)]",
                         color != @candidate_color && "border-gray-800 hover:border-white/70"
@@ -602,11 +736,12 @@ defmodule LiveTriviaWeb.PlayerLive do
     end
   end
 
-  defp broadcast_typing(socket, typing_text, guess_result) do
-    Phoenix.PubSub.broadcast(
+  defp broadcast_typing(socket, typing_text, guess_result, mode, bubble_id \\ nil) do
+    Phoenix.PubSub.broadcast_from(
       LiveTrivia.PubSub,
+      self(),
       typing_topic(socket.assigns.room_id),
-      {:player_typing, socket.assigns.player_id, typing_text, guess_result}
+      {:player_typing, socket.assigns.player_id, typing_text, guess_result, mode, bubble_id}
     )
   end
 
