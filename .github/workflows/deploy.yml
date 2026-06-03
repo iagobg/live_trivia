@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - main
-# dispara somente quando o push vai para a main
 
 jobs:
   deploy:
@@ -21,11 +20,18 @@ jobs:
             cd ~/live_trivia/live_trivia
             git pull origin main
             
-            echo "☑ Reconstruindo containers..."
-            docker compose up -d --build
+            echo "☑ Construindo a nova imagem Docker..."
+            docker build -t live-trivia .
+            
+            echo "☑ Parando e removendo o container antigo (se existir)..."
+            docker stop live-trivia || true
+            docker rm live-trivia || true
+            
+            echo "☑ Iniciando o novo container..."
+            docker run -d --name live-trivia --restart unless-stopped -p 3070:3070 -e SECRET_KEY_BASE="yngGTAh528QFKnBWXb03YdEk0Tb6p3Z1Bfo99Ff+toyndIT6PcYy5Fvl1dNSgeyGNTYGU8PYbt+TU7newsGsBw==" -e PHX_HOST="livetrivia.frameworksweb.com.br" -e PORT=3070 -e MIX_ENV=prod live-trivia
             
             echo "☑ Limpando imagens antigas..."
             docker image prune -f
             
-            echo "☑ Deploy concluído!"
-            docker compose ps
+            echo "☑ Deploy concluído! Status do container:"
+            docker ps -f name=live-trivia
