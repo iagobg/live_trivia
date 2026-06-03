@@ -27,6 +27,36 @@ import topbar from "../vendor/topbar"
 
 const Hooks = {}
 
+Hooks.HintTicker = {
+  mounted() {
+    this.content = this.el.querySelector(".hint-ticker-content")
+    this.updateTicker()
+  },
+
+  updated() {
+    this.content = this.el.querySelector(".hint-ticker-content")
+    this.updateTicker()
+  },
+
+  updateTicker() {
+    if (!this.content) return
+
+    this.el.classList.remove("is-scrolling")
+    this.content.style.removeProperty("--hint-overflow")
+    this.content.style.removeProperty("--hint-duration")
+
+    requestAnimationFrame(() => {
+      const overflow = this.content.scrollWidth - this.el.clientWidth
+
+      if (overflow <= 4) return
+
+      this.content.style.setProperty("--hint-overflow", `${overflow}px`)
+      this.content.style.setProperty("--hint-duration", "4s")
+      this.el.classList.add("is-scrolling")
+    })
+  },
+}
+
 Hooks.RoundMeter = {
   mounted() {
     this.progress = this.el.querySelector("[data-role='timer-progress']")

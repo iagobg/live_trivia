@@ -196,14 +196,13 @@ defmodule LiveTriviaWeb.PlayerLive do
           )
 
         guess_result = result && result.result
-        input_text = if guess_result == :correct, do: "", else: socket.assigns.input_text
 
         broadcast_typing(socket, "", guess_result)
 
         {:noreply,
          socket
          |> assign(:guess_result, guess_result)
-         |> assign(:input_text, input_text)
+         |> assign(:input_text, "")
          |> assign(
            :typing_by_player,
            Map.put(socket.assigns.typing_by_player, socket.assigns.player_id, "")
@@ -338,13 +337,17 @@ defmodule LiveTriviaWeb.PlayerLive do
                     placeholder={guess_placeholder(@game_state, @guess_result)}
                     autocomplete="off"
                     class={[
-                      "w-full rounded-xl border-2 px-5 py-4 text-lg font-medium text-white outline-none transition-all disabled:cursor-not-allowed disabled:opacity-50",
+                      "w-full rounded-xl border-2 py-4 pl-5 pr-24 text-lg font-medium text-white outline-none transition-all disabled:cursor-not-allowed disabled:opacity-50",
                       input_result_class(@guess_result)
                     ]}
                   />
-                  <div class="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-500">
+                  <button
+                    type="submit"
+                    disabled={!can_input?(@game_state, @guess_result)}
+                    class="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-gray-700 bg-gray-900/80 px-3 py-1.5 text-sm font-bold text-gray-300 transition hover:border-indigo-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
                     Enter
-                  </div>
+                  </button>
                 </div>
               </.form>
             </div>

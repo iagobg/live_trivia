@@ -185,10 +185,12 @@ defmodule LiveTriviaWeb.TriviaComponents do
 
             <div class="flex h-[4.8rem] w-full flex-col justify-start gap-1 overflow-hidden">
               <div
-                :for={hint <- @visible_hints}
-                class="h-5 truncate rounded-md border border-indigo-500/50 bg-indigo-600/70 px-2 py-0.5 text-[0.66rem] font-semibold leading-4 text-white"
+                :for={{hint, index} <- Enum.with_index(@visible_hints)}
+                id={"hint-ticker-#{@game_state.current_index}-#{index}"}
+                phx-hook="HintTicker"
+                class="hint-ticker h-5 overflow-hidden rounded-md border border-indigo-500/50 bg-indigo-600/70 px-2 py-0.5 text-[0.66rem] font-semibold leading-4 text-white"
               >
-                {hint}
+                <span class="hint-ticker-content">{hint}</span>
               </div>
             </div>
 
@@ -271,7 +273,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
 
       <div class="mx-auto flex min-h-[calc(100vh-6rem)] w-full max-w-lg flex-col justify-center">
         <div class="mb-8 text-center">
-          <img src={~p"/assets/img/trophy.png"} alt="Trophy" class="mx-auto h-24 w-24 object-contain" />
+          <img src={~p"/images/trophy.png"} alt="Trophy" class="mx-auto h-24 w-24 object-contain" />
           <h1 class="mt-3 text-4xl font-black">Final Leaderboard</h1>
           <p class="mt-2 text-gray-400">Game over</p>
         </div>

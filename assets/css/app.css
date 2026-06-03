@@ -118,6 +118,27 @@
   transition: stroke 180ms ease, opacity 180ms ease;
 }
 
+.hint-ticker-content {
+  display: inline-block;
+  max-width: none;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.hint-ticker.is-scrolling .hint-ticker-content {
+  animation: hint-ticker-scroll var(--hint-duration, 10s) ease-in-out 20ms infinite;
+}
+
+@keyframes hint-ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(calc(-1 * var(--hint-overflow, 0px)));
+  }
+}
+
 .victory-confetti {
   position: absolute;
   left: var(--x);

@@ -3,19 +3,20 @@ defmodule LiveTriviaWeb.LobbyLive do
 
   alias LiveTrivia.Lobby
 
-@impl true
+  @impl true
   def mount(_params, session, socket) do
     if connected?(socket) do
       Lobby.subscribe()
       # Trigger the deferred load for the initial connection
-      send(self(), :load_rooms) 
+      send(self(), :load_rooms)
     end
 
     {:ok,
      socket
      |> assign(:page_title, "Live Trivia Lobby")
      |> assign(:player_id, Map.fetch!(session, "player_id"))
-     |> assign(:rooms, []) # Fast, empty initial state for Lighthouse/TTFB
+     |> assign(:rooms, [])
+     |> assign(:rooms_loaded?, false)
      |> assign(:room_name, "")
      |> assign(:error, nil)}
   end
@@ -33,12 +34,18 @@ defmodule LiveTriviaWeb.LobbyLive do
 
   @impl true
   def handle_info(:load_rooms, socket) do
-    {:noreply, assign(socket, :rooms, Lobby.list_rooms())}
+    {:noreply,
+     socket
+     |> assign(:rooms, Lobby.list_rooms())
+     |> assign(:rooms_loaded?, true)}
   end
 
   @impl true
   def handle_info({:rooms_updated, rooms}, socket) do
-    {:noreply, assign(socket, :rooms, rooms)}
+    {:noreply,
+     socket
+     |> assign(:rooms, rooms)
+     |> assign(:rooms_loaded?, true)}
   end
 
   @impl true
@@ -131,7 +138,11 @@ defmodule LiveTriviaWeb.LobbyLive do
               :if={@rooms == []}
               class="col-span-full rounded-xl border border-dashed border-gray-800 bg-gray-900/40 px-6 py-12 text-center text-gray-400"
             >
-              No rooms open yet.
+              <%= if @rooms_loaded? do %>
+                No rooms open yet.
+              <% else %>
+                Loading rooms...
+              <% end %>
             </div>
           </section>
         </div>
