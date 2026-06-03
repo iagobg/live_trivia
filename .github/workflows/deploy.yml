@@ -1,8 +1,13 @@
-name: Deploy em Produção
+name: Deploy em Producao
+
 on:
   push:
     branches:
       - main
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -11,27 +16,45 @@ jobs:
     steps:
       - name: Conectar na VPS e fazer deploy
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          SECRET_KEY_BASE: ${{ secrets.SECRET_KEY_BASE }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          envs: SECRET_KEY_BASE
+          script_stop: true
           script: |
-            echo "☑ Atualizando código..."
+            set -eu
+
+            if [ -z "$SECRET_KEY_BASE" ]; then
+              echo "SECRET_KEY_BASE is missing"
+              exit 1
+            fi
+
+            echo "Atualizando codigo..."
             cd ~/live_trivia/live_trivia
-            git pull origin main
-            
-            echo "☑ Construindo a nova imagem Docker..."
+            git pull --ff-only origin main
+
+            echo "Construindo a nova imagem Docker..."
             docker build -t live-trivia .
-            
-            echo "☑ Parando e removendo o container antigo (se existir)..."
+
+            echo "Parando e removendo o container antigo (se existir)..."
             docker stop live-trivia || true
             docker rm live-trivia || true
-            
-            echo "☑ Iniciando o novo container..."
-            docker run -d --name live-trivia --restart unless-stopped -p 3070:3070 -e SECRET_KEY_BASE="yngGTAh528QFKnBWXb03YdEk0Tb6p3Z1Bfo99Ff+toyndIT6PcYy5Fvl1dNSgeyGNTYGU8PYbt+TU7newsGsBw==" -e PHX_HOST="livetrivia.frameworksweb.com.br" -e PORT=3070 -e MIX_ENV=prod live-trivia
-            
-            echo "☑ Limpando imagens antigas..."
+
+            echo "Iniciando o novo container..."
+            docker run -d --name live-trivia \
+              --restart unless-stopped \
+              -p 3070:3070 \
+              -e SECRET_KEY_BASE="$SECRET_KEY_BASE" \
+              -e PHX_HOST="livetrivia.frameworksweb.com.br" \
+              -e PORT=3070 \
+              -e MIX_ENV=prod \
+              live-trivia
+
+            echo "Limpando imagens antigas..."
             docker image prune -f
-            
-            echo "☑ Deploy concluído! Status do container:"
+
+            echo "Deploy concluido. Status do container:"
             docker ps -f name=live-trivia

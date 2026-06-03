@@ -14,7 +14,11 @@ defmodule LiveTriviaWeb.PlayerLive do
     room = Lobby.get_room(room_id)
     game_state = room && Game.get_state(room_id)
     joinable = game_state && joinable?(game_state)
-    reservation = reserve_player_slot(socket, room, joinable, room_id, player_id)
+    room_password_required? = room && not is_nil(room.password_hash)
+    room_unlocked? = !room_password_required?
+
+    reservation =
+      reserve_player_slot(socket, room, joinable && room_unlocked?, room_id, player_id)
 
     if connected?(socket) && room do
       Game.subscribe(room_id)
@@ -26,7 +30,7 @@ defmodule LiveTriviaWeb.PlayerLive do
 
     candidate_color = initial_color(room_id, player_id, player_color)
 
-    if connected?(socket) && room && joinable && reservation == :ok do
+    if connected?(socket) && room && joinable && room_unlocked? && reservation == :ok do
       Phoenix.PubSub.subscribe(LiveTrivia.PubSub, color_topic(room_id))
       track_color_selection(room_id, player_id, candidate_color)
     end
@@ -38,12 +42,19 @@ defmodule LiveTriviaWeb.PlayerLive do
       |> assign(:room_id, room_id)
       |> assign(:game_state, game_state)
       |> assign(:joinable, joinable)
-      |> assign(:players, if(room, do: players(room_id), else: []))
+      |> assign(:room_password_required?, room_password_required?)
+      |> assign(:room_unlocked?, room_unlocked?)
+      |> assign(:room_password_input, "")
+      |> assign(:room_password_error, nil)
+      |> assign(:players, if(room && room_unlocked?, do: players(room_id), else: []))
       |> assign(:player_id, player_id)
       |> assign(:player_color, player_color)
       |> assign(:candidate_color, candidate_color)
       |> assign(:player_colors, PlayerColors.all())
-      |> assign(:taken_colors, if(room, do: taken_colors(room_id, player_id), else: []))
+      |> assign(
+        :taken_colors,
+        if(room && room_unlocked?, do: taken_colors(room_id, player_id), else: [])
+      )
       |> assign(:player_name, nil)
       |> assign(:player_name_input, "")
       |> assign(:input_text, "")
@@ -147,6 +158,32 @@ defmodule LiveTriviaWeb.PlayerLive do
          socket
          |> assign(:candidate_color, color)
          |> assign(:taken_colors, taken_colors(socket.assigns.room_id, socket.assigns.player_id))}
+    end
+  end
+
+  def handle_event("room_password_change", %{"room" => %{"password" => password}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:room_password_input, String.slice(password, 0, 80))
+     |> assign(:room_password_error, nil)}
+  end
+
+  def handle_event("unlock_room", %{"room" => %{"password" => password}}, socket) do
+    case Lobby.verify_room_password(socket.assigns.room_id, password) do
+      :ok ->
+        unlock_room(socket)
+
+      {:error, :invalid_password} ->
+        {:noreply,
+         socket
+         |> assign(:room_password_input, "")
+         |> assign(:room_password_error, "Incorrect password.")}
+
+      {:error, :room_closed} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "This room was closed.")
+         |> push_navigate(to: ~p"/")}
     end
   end
 
@@ -355,60 +392,94 @@ defmodule LiveTriviaWeb.PlayerLive do
         <% end %>
       <% else %>
         <main class="flex min-h-screen items-center justify-center bg-gray-950 px-4 text-white">
-          <div class="text-center">
-            <div class="mb-8">
-              <div class="mb-4 text-6xl font-black text-indigo-300">?</div>
-              <h1 class="mb-2 text-4xl font-bold">{@room.name}</h1>
-              <p class="text-lg text-gray-400">Join as a player</p>
-            </div>
-            <.form
-              for={%{}}
-              as={:player}
-              phx-change="name_change"
-              phx-submit="join"
-              class="flex flex-col items-center gap-4"
-            >
-              <input
-                type="text"
-                name="player[name]"
-                value={@player_name_input}
-                placeholder="Enter your name"
-                maxlength="20"
-                autofocus
-                class="w-72 rounded-xl border border-gray-600 bg-gray-800 px-6 py-3 text-center text-xl text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
-              />
-              <div class="w-72">
-                <div class="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
-                  Player color
-                </div>
-                <div class="grid grid-cols-8 gap-2">
-                  <button
-                    :for={color <- @player_colors}
-                    type="button"
-                    phx-click="choose_color"
-                    phx-value-color={color}
-                    disabled={color in @taken_colors}
-                    class={[
-                      "h-8 rounded-full border-2 transition disabled:cursor-not-allowed disabled:opacity-25",
-                      color == @candidate_color &&
-                        "scale-110 border-white shadow-[0_0_18px_rgba(255,255,255,0.35)]",
-                      color != @candidate_color && "border-gray-800 hover:border-white/70"
-                    ]}
-                    style={"background-color: #{color};"}
-                    aria-label={"Choose #{color}"}
-                  >
-                  </button>
-                </div>
+          <%= if @room_password_required? && !@room_unlocked? do %>
+            <div class="w-full max-w-sm text-center">
+              <div class="mb-8">
+                <div class="mb-4 text-6xl font-black text-amber-300">#</div>
+                <h1 class="mb-2 text-4xl font-bold">{@room.name}</h1>
+                <p class="text-lg text-gray-400">Enter the room password</p>
               </div>
-              <button
-                type="submit"
-                disabled={is_nil(@candidate_color)}
-                class="rounded-xl bg-indigo-600 px-8 py-3 text-lg font-bold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+
+              <.form
+                for={%{}}
+                as={:room}
+                phx-change="room_password_change"
+                phx-submit="unlock_room"
+                class="flex flex-col items-center gap-4"
               >
-                Join Game
-              </button>
-            </.form>
-          </div>
+                <input
+                  type="password"
+                  name="room[password]"
+                  value={@room_password_input}
+                  placeholder="Room password"
+                  maxlength="80"
+                  autofocus
+                  class="w-72 rounded-xl border border-gray-600 bg-gray-800 px-6 py-3 text-center text-xl text-white outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                />
+                <div :if={@room_password_error} class="text-sm font-semibold text-red-300">
+                  {@room_password_error}
+                </div>
+                <button class="rounded-xl bg-indigo-600 px-8 py-3 text-lg font-bold text-white transition-colors hover:bg-indigo-500">
+                  Continue
+                </button>
+              </.form>
+            </div>
+          <% else %>
+            <div class="text-center">
+              <div class="mb-8">
+                <div class="mb-4 text-6xl font-black text-indigo-300">?</div>
+                <h1 class="mb-2 text-4xl font-bold">{@room.name}</h1>
+                <p class="text-lg text-gray-400">Join as a player</p>
+              </div>
+              <.form
+                for={%{}}
+                as={:player}
+                phx-change="name_change"
+                phx-submit="join"
+                class="flex flex-col items-center gap-4"
+              >
+                <input
+                  type="text"
+                  name="player[name]"
+                  value={@player_name_input}
+                  placeholder="Enter your name"
+                  maxlength="20"
+                  autofocus
+                  class="w-72 rounded-xl border border-gray-600 bg-gray-800 px-6 py-3 text-center text-xl text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                />
+                <div class="w-72">
+                  <div class="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+                    Player color
+                  </div>
+                  <div class="grid grid-cols-8 gap-2">
+                    <button
+                      :for={color <- @player_colors}
+                      type="button"
+                      phx-click="choose_color"
+                      phx-value-color={color}
+                      disabled={color in @taken_colors}
+                      class={[
+                        "h-8 rounded-full border-2 transition disabled:cursor-not-allowed disabled:opacity-25",
+                        color == @candidate_color &&
+                          "scale-110 border-white shadow-[0_0_18px_rgba(255,255,255,0.35)]",
+                        color != @candidate_color && "border-gray-800 hover:border-white/70"
+                      ]}
+                      style={"background-color: #{color};"}
+                      aria-label={"Choose #{color}"}
+                    >
+                    </button>
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  disabled={is_nil(@candidate_color)}
+                  class="rounded-xl bg-indigo-600 px-8 py-3 text-lg font-bold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Join Game
+                </button>
+              </.form>
+            </div>
+          <% end %>
         </main>
       <% end %>
     </Layouts.app>
@@ -495,6 +566,51 @@ defmodule LiveTriviaWeb.PlayerLive do
          socket
          |> put_flash(:error, "Could not join this room.")
          |> assign_available_color()}
+    end
+  end
+
+  defp unlock_room(socket) do
+    room_id = socket.assigns.room_id
+    player_id = socket.assigns.player_id
+    room = socket.assigns.room
+
+    case reserve_player_slot(socket, room, socket.assigns.joinable, room_id, player_id) do
+      :ok ->
+        if connected?(socket) do
+          Phoenix.PubSub.subscribe(LiveTrivia.PubSub, color_topic(room_id))
+        end
+
+        Lobby.touch_room(room_id)
+
+        socket =
+          socket
+          |> assign(:room_unlocked?, true)
+          |> assign(:room_password_input, "")
+          |> assign(:room_password_error, nil)
+          |> assign(:players, players(room_id))
+          |> assign_available_color()
+
+        update_color_selection(socket, socket.assigns.candidate_color)
+
+        {:noreply, socket}
+
+      {:error, :room_full} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "This room is full.")
+         |> push_navigate(to: ~p"/")}
+
+      {:error, :game_in_progress} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "This game is already in progress.")
+         |> push_navigate(to: ~p"/")}
+
+      {:error, :room_closed} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "This room was closed.")
+         |> push_navigate(to: ~p"/")}
     end
   end
 

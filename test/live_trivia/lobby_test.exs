@@ -58,6 +58,31 @@ defmodule LiveTrivia.LobbyTest do
     on_exit(fn -> Lobby.close_room(room.id) end)
   end
 
+  test "verifies room passwords without exposing the password" do
+    {:ok, room} = Lobby.create_room("Protected room", "admin-password", "secret")
+
+    assert :ok = Lobby.verify_room_password(room.id, "secret")
+    assert {:error, :invalid_password} = Lobby.verify_room_password(room.id, "wrong")
+
+    public_room = Enum.find(Lobby.list_rooms(), &(&1.id == room.id))
+    assert public_room.password_protected?
+    refute Map.has_key?(public_room, :password_hash)
+    refute Map.has_key?(public_room, :password_salt)
+
+    on_exit(fn -> Lobby.close_room(room.id) end)
+  end
+
+  test "rooms without passwords do not require verification" do
+    room = create_room!()
+
+    assert :ok = Lobby.verify_room_password(room.id, "")
+
+    public_room = Enum.find(Lobby.list_rooms(), &(&1.id == room.id))
+    refute public_room.password_protected?
+
+    on_exit(fn -> Lobby.close_room(room.id) end)
+  end
+
   defp create_room! do
     {:ok, room} = Lobby.create_room("Test room", "admin-#{System.unique_integer([:positive])}")
     room

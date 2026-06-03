@@ -18,12 +18,32 @@ defmodule LiveTriviaWeb.LobbyLive do
      |> assign(:rooms, [])
      |> assign(:rooms_loaded?, false)
      |> assign(:room_name, "")
+     |> assign(:room_password_enabled?, false)
+     |> assign(:room_password, "")
      |> assign(:error, nil)}
   end
 
   @impl true
-  def handle_event("create_room", %{"room" => %{"name" => name}}, socket) do
-    case Lobby.create_room(name, socket.assigns.player_id) do
+  def handle_event("room_form_change", %{"room" => room_params}, socket) do
+    password_enabled? = Map.get(room_params, "password_enabled") == "true"
+
+    {:noreply,
+     socket
+     |> assign(:room_name, Map.get(room_params, "name", ""))
+     |> assign(:room_password_enabled?, password_enabled?)
+     |> assign(:room_password, Map.get(room_params, "password", ""))}
+  end
+
+  @impl true
+  def handle_event("create_room", %{"room" => room_params}, socket) do
+    name = Map.get(room_params, "name", "")
+
+    password =
+      if socket.assigns.room_password_enabled?,
+        do: Map.get(room_params, "password", ""),
+        else: nil
+
+    case Lobby.create_room(name, socket.assigns.player_id, password) do
       {:ok, room} ->
         {:noreply, push_navigate(socket, to: ~p"/rooms/#{room.id}/admin")}
 
@@ -73,17 +93,50 @@ defmodule LiveTriviaWeb.LobbyLive do
               </p>
             </div>
 
-            <.form for={%{}} as={:room} phx-submit="create_room" class="flex gap-2">
-              <input
-                type="text"
-                name="room[name]"
-                maxlength="40"
-                placeholder="Room name"
-                class="w-52 rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-white outline-none focus:border-indigo-500"
-              />
-              <button class="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-500">
-                Create
-              </button>
+            <.form
+              for={%{}}
+              as={:room}
+              phx-change="room_form_change"
+              phx-submit="create_room"
+              class="grid w-full gap-2 sm:w-auto sm:grid-cols-[13rem_11rem_auto] sm:items-center"
+            >
+              <div class="sm:col-start-1">
+                <input
+                  type="text"
+                  name="room[name]"
+                  value={@room_name}
+                  maxlength="40"
+                  placeholder="Room name"
+                  class="w-full rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-500"
+                />
+              </div>
+
+              <div class="sm:col-start-2">
+                <input
+                  type="password"
+                  name="room[password]"
+                  value={@room_password}
+                  disabled={!@room_password_enabled?}
+                  maxlength="80"
+                  placeholder="Password"
+                  class="w-full rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-500 disabled:bg-gray-900/40 disabled:text-gray-600 disabled:placeholder:text-gray-700"
+                />
+              </div>
+
+              <div class="flex items-center gap-3 sm:col-start-3">
+                <label class="flex items-center gap-2 rounded-xl border border-gray-800 bg-gray-900/80 px-3 py-3 text-xs font-semibold text-gray-300">
+                  <input
+                    type="checkbox"
+                    name="room[password_enabled]"
+                    value="true"
+                    checked={@room_password_enabled?}
+                    class="h-4 w-4 rounded border-gray-600 bg-gray-950 text-indigo-600"
+                  /> Password
+                </label>
+                <button class="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-500">
+                  Create
+                </button>
+              </div>
             </.form>
           </header>
 
@@ -116,6 +169,12 @@ defmodule LiveTriviaWeb.LobbyLive do
                   </div>
                   <div class="rounded-full bg-emerald-500/15 px-2 py-1 text-[0.65rem] font-semibold text-emerald-200">
                     {room.admin_count} admin{if room.admin_count == 1, do: "", else: "s"}
+                  </div>
+                  <div
+                    :if={room.password_protected?}
+                    class="rounded-full bg-amber-500/15 px-2 py-1 text-[0.65rem] font-semibold uppercase text-amber-200"
+                  >
+                    Locked
                   </div>
                   <div class="rounded-full bg-gray-800 px-2 py-1 text-[0.65rem] font-semibold uppercase text-gray-400">
                     {room.phase |> Atom.to_string() |> String.replace("_", " ")}

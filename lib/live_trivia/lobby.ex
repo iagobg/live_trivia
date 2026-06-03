@@ -11,7 +11,17 @@ defmodule LiveTrivia.Lobby do
   @podium_close_after_ms 30_000
 
   defmodule Room do
-    defstruct [:id, :name, :admin_id, :game_pid, :created_at, :updated_at, player_colors: %{}]
+    defstruct [
+      :id,
+      :name,
+      :admin_id,
+      :game_pid,
+      :created_at,
+      :updated_at,
+      :password_hash,
+      :password_salt,
+      player_colors: %{}
+    ]
   end
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
@@ -22,9 +32,12 @@ defmodule LiveTrivia.Lobby do
 
   def get_room(room_id), do: GenServer.call(__MODULE__, {:get_room, room_id})
 
-  def create_room(name, admin_id) do
-    GenServer.call(__MODULE__, {:create_room, name, admin_id})
+  def create_room(name, admin_id, password \\ nil) do
+    GenServer.call(__MODULE__, {:create_room, name, admin_id, password})
   end
+
+  def verify_room_password(room_id, password),
+    do: GenServer.call(__MODULE__, {:verify_room_password, room_id, password})
 
   def close_room(room_id), do: GenServer.call(__MODULE__, {:close_room, room_id})
 
@@ -83,11 +96,12 @@ defmodule LiveTrivia.Lobby do
     {:reply, Map.get(rooms, room_id), rooms}
   end
 
-  def handle_call({:create_room, name, admin_id}, _from, rooms) do
+  def handle_call({:create_room, name, admin_id, password}, _from, rooms) do
     if map_size(rooms) >= @max_rooms do
       {:reply, {:error, :room_limit}, rooms}
     else
       room_id = random_id()
+      {password_hash, password_salt} = password_credentials(password)
 
       {:ok, game_pid} =
         DynamicSupervisor.start_child(
@@ -103,13 +117,26 @@ defmodule LiveTrivia.Lobby do
         admin_id: admin_id,
         game_pid: game_pid,
         created_at: now,
-        updated_at: now
+        updated_at: now,
+        password_hash: password_hash,
+        password_salt: password_salt
       }
 
       rooms = Map.put(rooms, room_id, room)
       broadcast_rooms(rooms)
       {:reply, {:ok, room}, rooms}
     end
+  end
+
+  def handle_call({:verify_room_password, room_id, password}, _from, rooms) do
+    result =
+      case Map.get(rooms, room_id) do
+        nil -> {:error, :room_closed}
+        %{password_hash: nil} -> :ok
+        room -> verify_password(room, password)
+      end
+
+    {:reply, result, rooms}
   end
 
   def handle_call({:close_room, room_id}, _from, rooms) do
@@ -340,6 +367,7 @@ defmodule LiveTrivia.Lobby do
         admin_id: room.admin_id,
         phase: room_phase(room.id),
         joinable: joinable?(room.id),
+        password_protected?: not is_nil(room.password_hash),
         player_count: max(player_count(room.id), map_size(room.player_colors)),
         admin_count: admin_count(room.id),
         updated_at: room.updated_at
@@ -368,6 +396,38 @@ defmodule LiveTrivia.Lobby do
   defp normalize_name(name, room_id) do
     name = name |> to_string() |> String.trim() |> String.slice(0, 40)
     if name == "", do: "Room #{String.upcase(room_id)}", else: name
+  end
+
+  defp password_credentials(password) do
+    password = normalize_password(password)
+
+    if password == "" do
+      {nil, nil}
+    else
+      salt = :crypto.strong_rand_bytes(16)
+      {hash_password(password, salt), salt}
+    end
+  end
+
+  defp verify_password(%Room{password_hash: expected_hash, password_salt: salt}, password) do
+    password_hash = password |> normalize_password() |> hash_password(salt)
+
+    if Plug.Crypto.secure_compare(password_hash, expected_hash) do
+      :ok
+    else
+      {:error, :invalid_password}
+    end
+  end
+
+  defp normalize_password(password) do
+    password
+    |> to_string()
+    |> String.trim()
+    |> String.slice(0, 80)
+  end
+
+  defp hash_password(password, salt) do
+    :crypto.hash(:sha256, [salt, password])
   end
 
   defp random_id do
