@@ -17,21 +17,7 @@ defmodule LiveTriviaWeb.LobbyLive do
      |> assign(:player_id, Map.fetch!(session, "player_id"))
      |> assign(:rooms, [])
      |> assign(:rooms_loaded?, false)
-     |> assign(:room_name, "")
-     |> assign(:room_password_enabled?, false)
-     |> assign(:room_password, "")
      |> assign(:error, nil)}
-  end
-
-  @impl true
-  def handle_event("room_form_change", %{"room" => room_params}, socket) do
-    password_enabled? = Map.get(room_params, "password_enabled") == "true"
-
-    {:noreply,
-     socket
-     |> assign(:room_name, Map.get(room_params, "name", ""))
-     |> assign(:room_password_enabled?, password_enabled?)
-     |> assign(:room_password, Map.get(room_params, "password", ""))}
   end
 
   @impl true
@@ -39,7 +25,7 @@ defmodule LiveTriviaWeb.LobbyLive do
     name = Map.get(room_params, "name", "")
 
     password =
-      if socket.assigns.room_password_enabled?,
+      if Map.get(room_params, "password_enabled") == "true",
         do: Map.get(room_params, "password", ""),
         else: nil
 
@@ -96,15 +82,15 @@ defmodule LiveTriviaWeb.LobbyLive do
             <.form
               for={%{}}
               as={:room}
-              phx-change="room_form_change"
               phx-submit="create_room"
+              id="create-room-form"
+              phx-hook="RoomPasswordToggle"
               class="grid w-full gap-2 sm:w-auto sm:grid-cols-[13rem_11rem_auto] sm:items-center"
             >
               <div class="sm:col-start-1">
                 <input
                   type="text"
                   name="room[name]"
-                  value={@room_name}
                   maxlength="40"
                   placeholder="Room name"
                   class="w-full rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-500"
@@ -115,8 +101,8 @@ defmodule LiveTriviaWeb.LobbyLive do
                 <input
                   type="password"
                   name="room[password]"
-                  value={@room_password}
-                  disabled={!@room_password_enabled?}
+                  data-role="room-password"
+                  disabled
                   maxlength="80"
                   placeholder="Password"
                   class="w-full rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-500 disabled:bg-gray-900/40 disabled:text-gray-600 disabled:placeholder:text-gray-700"
@@ -128,8 +114,8 @@ defmodule LiveTriviaWeb.LobbyLive do
                   <input
                     type="checkbox"
                     name="room[password_enabled]"
+                    data-role="room-password-enabled"
                     value="true"
-                    checked={@room_password_enabled?}
                     class="h-4 w-4 rounded border-gray-600 bg-gray-950 text-indigo-600"
                   /> Password
                 </label>
@@ -174,7 +160,7 @@ defmodule LiveTriviaWeb.LobbyLive do
                     :if={room.password_protected?}
                     class="rounded-full bg-amber-500/15 px-2 py-1 text-[0.65rem] font-semibold uppercase text-amber-200"
                   >
-                    Locked
+                    🔒
                   </div>
                   <div class="rounded-full bg-gray-800 px-2 py-1 text-[0.65rem] font-semibold uppercase text-gray-400">
                     {room.phase |> Atom.to_string() |> String.replace("_", " ")}

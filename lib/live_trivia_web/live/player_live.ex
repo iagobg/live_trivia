@@ -44,7 +44,6 @@ defmodule LiveTriviaWeb.PlayerLive do
       |> assign(:joinable, joinable)
       |> assign(:room_password_required?, room_password_required?)
       |> assign(:room_unlocked?, room_unlocked?)
-      |> assign(:room_password_input, "")
       |> assign(:room_password_error, nil)
       |> assign(:players, if(room && room_unlocked?, do: players(room_id), else: []))
       |> assign(:player_id, player_id)
@@ -56,7 +55,6 @@ defmodule LiveTriviaWeb.PlayerLive do
         if(room && room_unlocked?, do: taken_colors(room_id, player_id), else: [])
       )
       |> assign(:player_name, nil)
-      |> assign(:player_name_input, "")
       |> assign(:input_text, "")
       |> assign(:guess_result, nil)
       |> assign(:typing_by_player, %{})
@@ -134,10 +132,6 @@ defmodule LiveTriviaWeb.PlayerLive do
     end
   end
 
-  def handle_event("name_change", %{"player" => %{"name" => name}}, socket) do
-    {:noreply, assign(socket, :player_name_input, String.slice(name, 0, 20))}
-  end
-
   def handle_event("choose_color", %{"color" => color}, socket) do
     cond do
       socket.assigns.player_name ->
@@ -161,23 +155,13 @@ defmodule LiveTriviaWeb.PlayerLive do
     end
   end
 
-  def handle_event("room_password_change", %{"room" => %{"password" => password}}, socket) do
-    {:noreply,
-     socket
-     |> assign(:room_password_input, String.slice(password, 0, 80))
-     |> assign(:room_password_error, nil)}
-  end
-
   def handle_event("unlock_room", %{"room" => %{"password" => password}}, socket) do
     case Lobby.verify_room_password(socket.assigns.room_id, password) do
       :ok ->
         unlock_room(socket)
 
       {:error, :invalid_password} ->
-        {:noreply,
-         socket
-         |> assign(:room_password_input, "")
-         |> assign(:room_password_error, "Incorrect password.")}
+        {:noreply, assign(socket, :room_password_error, "Incorrect password.")}
 
       {:error, :room_closed} ->
         {:noreply,
@@ -364,7 +348,14 @@ defmodule LiveTriviaWeb.PlayerLive do
                 </div>
               </div>
 
-              <.form for={%{}} as={:guess} phx-change="typing" phx-submit="submit_guess">
+              <.form
+                for={%{}}
+                as={:guess}
+                id="guess-form"
+                phx-change="typing"
+                phx-submit="submit_guess"
+                phx-hook="GuessInputFocus"
+              >
                 <div class="relative">
                   <input
                     type="text"
@@ -395,7 +386,7 @@ defmodule LiveTriviaWeb.PlayerLive do
           <%= if @room_password_required? && !@room_unlocked? do %>
             <div class="w-full max-w-sm text-center">
               <div class="mb-8">
-                <div class="mb-4 text-6xl font-black text-amber-300">#</div>
+                <div class="mb-4 text-6xl font-black text-amber-300">🔒</div>
                 <h1 class="mb-2 text-4xl font-bold">{@room.name}</h1>
                 <p class="text-lg text-gray-400">Enter the room password</p>
               </div>
@@ -403,14 +394,12 @@ defmodule LiveTriviaWeb.PlayerLive do
               <.form
                 for={%{}}
                 as={:room}
-                phx-change="room_password_change"
                 phx-submit="unlock_room"
                 class="flex flex-col items-center gap-4"
               >
                 <input
                   type="password"
                   name="room[password]"
-                  value={@room_password_input}
                   placeholder="Room password"
                   maxlength="80"
                   autofocus
@@ -434,14 +423,14 @@ defmodule LiveTriviaWeb.PlayerLive do
               <.form
                 for={%{}}
                 as={:player}
-                phx-change="name_change"
+                id="player-profile-form"
                 phx-submit="join"
+                phx-hook="PlayerProfileForm"
                 class="flex flex-col items-center gap-4"
               >
                 <input
                   type="text"
                   name="player[name]"
-                  value={@player_name_input}
                   placeholder="Enter your name"
                   maxlength="20"
                   autofocus
@@ -585,7 +574,6 @@ defmodule LiveTriviaWeb.PlayerLive do
         socket =
           socket
           |> assign(:room_unlocked?, true)
-          |> assign(:room_password_input, "")
           |> assign(:room_password_error, nil)
           |> assign(:players, players(room_id))
           |> assign_available_color()
@@ -739,7 +727,7 @@ defmodule LiveTriviaWeb.PlayerLive do
 
   defp guess_placeholder(%{phase: :results}, _result), do: "Round over"
   defp guess_placeholder(_state, :correct), do: "Correct"
-  defp guess_placeholder(_state, _result), do: "Type your answer and press Enter"
+  defp guess_placeholder(_state, _result), do: "Take your guess!"
 
   defp input_result_class(:correct),
     do: "border-green-500 bg-green-900/50 shadow-[0_0_20px_rgba(34,197,94,0.4)]"

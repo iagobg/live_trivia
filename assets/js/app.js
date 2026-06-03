@@ -27,6 +27,99 @@ import topbar from "../vendor/topbar"
 
 const Hooks = {}
 
+Hooks.RoomPasswordToggle = {
+  mounted() {
+    this.checkbox = this.el.querySelector("[data-role='room-password-enabled']")
+    this.password = this.el.querySelector("[data-role='room-password']")
+    this.toggle = this.toggle.bind(this)
+
+    if (this.checkbox) this.checkbox.addEventListener("change", this.toggle)
+    this.toggle()
+  },
+
+  updated() {
+    this.checkbox = this.el.querySelector("[data-role='room-password-enabled']")
+    this.password = this.el.querySelector("[data-role='room-password']")
+    this.toggle()
+  },
+
+  destroyed() {
+    if (this.checkbox) this.checkbox.removeEventListener("change", this.toggle)
+  },
+
+  toggle() {
+    if (!this.checkbox || !this.password) return
+
+    this.password.disabled = !this.checkbox.checked
+
+    if (!this.checkbox.checked) {
+      this.password.value = ""
+    }
+  },
+}
+
+Hooks.PlayerProfileForm = {
+  mounted() {
+    this.capture()
+  },
+
+  beforeUpdate() {
+    this.capture()
+  },
+
+  updated() {
+    this.restore()
+  },
+
+  capture() {
+    const input = this.nameInput()
+
+    if (!input) return
+
+    this.nameValue = input.value
+    this.selectionStart = input.selectionStart
+    this.selectionEnd = input.selectionEnd
+    this.hadFocus = document.activeElement === input
+  },
+
+  restore() {
+    const input = this.nameInput()
+
+    if (!input || !this.nameValue) return
+
+    input.value = this.nameValue
+
+    if (this.hadFocus) {
+      input.focus()
+      input.setSelectionRange(this.selectionStart, this.selectionEnd)
+    }
+  },
+
+  nameInput() {
+    return this.el.querySelector("input[name='player[name]']")
+  },
+}
+
+Hooks.GuessInputFocus = {
+  mounted() {
+    this.focusInput()
+  },
+
+  updated() {
+    this.focusInput()
+  },
+
+  focusInput() {
+    requestAnimationFrame(() => {
+      const input = this.el.querySelector("input[name='guess[text]']")
+
+      if (!input || input.disabled) return
+
+      input.focus({preventScroll: true})
+    })
+  },
+}
+
 Hooks.HintTicker = {
   mounted() {
     this.content = this.el.querySelector(".hint-ticker-content")
