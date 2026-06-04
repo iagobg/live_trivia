@@ -118,24 +118,6 @@
   transition: stroke 180ms ease, opacity 180ms ease;
 }
 
-.guess-limit-shake {
-  animation: guess-limit-shake 220ms ease-in-out 0ms 1;
-}
-
-@keyframes guess-limit-shake {
-  0%, 100% {
-    transform: translateX(0);
-  }
-
-  25% {
-    transform: translateX(-0.35rem);
-  }
-
-  75% {
-    transform: translateX(0.35rem);
-  }
-}
-
 .hint-ticker-content {
   display: inline-block;
   max-width: none;
@@ -166,28 +148,6 @@
   unicode-bidi: plaintext;
 }
 
-.typing-bubble.is-submitted.is-animated {
-  animation: typing-bubble-evaporate 2s ease-out 0ms 1 forwards;
-}
-
-.typing-bubble.is-submitted {
-  text-align: center;
-}
-
-.typing-bubble.is-submitted .typing-bubble-content {
-  display: inline-block;
-  max-width: none;
-  will-change: transform;
-}
-
-.typing-bubble.is-submitted.is-overflowing {
-  text-align: left;
-}
-
-.typing-bubble.is-submitted.is-animated.is-scrolling .typing-bubble-content {
-  animation: typing-bubble-scroll var(--typing-duration, 2s) linear 0ms 1 forwards;
-}
-
 .guess-burst {
   animation: guess-burst-pop 900ms ease-out 0ms 1 forwards;
 }
@@ -206,28 +166,6 @@
 
   to {
     transform: translateX(calc(-1 * var(--hint-overflow, 0px)));
-  }
-}
-
-@keyframes typing-bubble-scroll {
-  from {
-    transform: translateX(0);
-  }
-
-  to {
-    transform: translateX(calc(-1 * var(--typing-overflow, 0px)));
-  }
-}
-
-@keyframes typing-bubble-evaporate {
-  from {
-    opacity: 1;
-    translate: 0 0;
-  }
-
-  to {
-    opacity: 0;
-    translate: 0 -1rem;
   }
 }
 

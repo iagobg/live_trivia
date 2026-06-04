@@ -9,7 +9,6 @@ defmodule LiveTriviaWeb.PlayerLive do
   import LiveTriviaWeb.TriviaComponents
 
   @submitted_clear_delay_ms 2_000
-  @max_visible_bubbles_per_player 5
   @typing_flush_ms 33
 
   @impl true
@@ -231,9 +230,6 @@ defmodule LiveTriviaWeb.PlayerLive do
       text == "" ->
         {:noreply, socket}
 
-      current_player_bubble_count(socket) >= @max_visible_bubbles_per_player ->
-        {:noreply, push_event(socket, "guess-limit", %{})}
-
       true ->
         bubble_id = submitted_bubble_id()
 
@@ -369,16 +365,6 @@ defmodule LiveTriviaWeb.PlayerLive do
      |> assign(:guess_results, guess_results)}
   end
 
-  defp current_player_bubble_count(%Phoenix.LiveView.Socket{assigns: assigns}) do
-    current_player_bubble_count(assigns)
-  end
-
-  defp current_player_bubble_count(assigns) do
-    assigns.typing_by_player
-    |> Map.get(assigns.player_id)
-    |> TypingBubble.submitted_count()
-  end
-
   defp submitted_bubble_id do
     System.unique_integer([:positive, :monotonic])
     |> Integer.to_string()
@@ -427,11 +413,6 @@ defmodule LiveTriviaWeb.PlayerLive do
 
   @impl true
   def render(assigns) do
-    assigns =
-      assigns
-      |> assign(:current_player_bubble_count, current_player_bubble_count(assigns))
-      |> assign(:max_visible_bubbles_per_player, @max_visible_bubbles_per_player)
-
     ~H"""
     <Layouts.app flash={@flash}>
       <%= if @player_name do %>
@@ -503,8 +484,6 @@ defmodule LiveTriviaWeb.PlayerLive do
                 phx-change="typing"
                 phx-submit="submit_guess"
                 phx-hook="GuessInputFocus"
-                data-submitted-count={@current_player_bubble_count}
-                data-max-submitted-bubbles={@max_visible_bubbles_per_player}
               >
                 <div class="relative">
                   <input

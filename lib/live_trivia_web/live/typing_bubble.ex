@@ -24,7 +24,6 @@ defmodule LiveTriviaWeb.TypingBubble do
   attr :id, :string, required: true
   attr :player, :map, required: true
   attr :text, :string, required: true
-  attr :submitted, :boolean, default: false
   attr :class, :any, default: nil
 
   def typing_bubble(assigns) do
@@ -34,17 +33,9 @@ defmodule LiveTriviaWeb.TypingBubble do
       phx-hook="TypingBubble"
       class={[
         "typing-bubble translate-y-0 overflow-hidden border font-semibold text-white opacity-100 shadow-lg",
-        if(@submitted, do: "is-submitted", else: "is-live"),
-        @submitted && animation_enabled?() && "is-animated",
+        "is-live",
         @class
       ]}
-      phx-remove={
-        JS.transition(
-          {"transition ease-out duration-500", "opacity-100 translate-y-0",
-           "opacity-0 -translate-y-4"},
-          time: 500
-        )
-      }
       style={typing_bubble_style(@player)}
     >
       <span class="typing-bubble-content">{@text}</span>
@@ -76,8 +67,6 @@ defmodule LiveTriviaWeb.TypingBubble do
 
     active + length(submitted_bubbles(entry))
   end
-
-  def submitted_count(entry), do: length(submitted_bubbles(entry))
 
   def animation_enabled? do
     Application.get_env(:live_trivia, :typing_bubble_animation?, true)
@@ -139,7 +128,6 @@ defmodule LiveTriviaWeb.TypingBubble do
 
   def add_submitted(entry, id, text) do
     entry = normalize_entry(entry)
-    submitted = submitted_bubbles(entry)
 
     cond do
       !animation_enabled?() ->
@@ -147,13 +135,10 @@ defmodule LiveTriviaWeb.TypingBubble do
         |> Map.put(:typing, typing_entry(""))
         |> Map.put(:submitted, [])
 
-      Enum.any?(submitted, &(&1.id == id)) ->
-        entry
-
       true ->
         entry
         |> Map.put(:typing, typing_entry(""))
-        |> Map.put(:submitted, submitted ++ [submitted_entry(id, text)])
+        |> Map.put(:submitted, [submitted_entry(id, text)])
     end
   end
 

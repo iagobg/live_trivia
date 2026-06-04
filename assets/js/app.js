@@ -106,18 +106,15 @@ Hooks.GuessInputFocus = {
     this.onInput = this.onInput.bind(this)
     this.onFocusOut = this.onFocusOut.bind(this)
     this.recentlySubmittedText = null
-    this.localSubmittedCount = this.submittedCount()
     this.focusFrame = null
 
     this.el.addEventListener("submit", this.onSubmit)
     this.el.addEventListener("input", this.onInput)
     this.el.addEventListener("focusout", this.onFocusOut)
-    this.handleEvent("guess-limit", () => this.shakeInput())
     this.focusInput()
   },
 
   updated() {
-    this.localSubmittedCount = this.submittedCount()
     this.clearRehydratedSubmit()
     this.focusInput()
   },
@@ -137,14 +134,11 @@ Hooks.GuessInputFocus = {
 
     this.focusInput(true)
 
-    if (this.submitWouldHitLimit()) return
-
     const submittedText = input.value.trim()
 
     if (!submittedText) return
 
     this.recentlySubmittedText = submittedText
-    this.localSubmittedCount = Math.min(this.maxSubmittedCount(), this.localSubmittedCount + 1)
 
     setTimeout(() => {
       const currentInput = this.guessInput()
@@ -193,29 +187,6 @@ Hooks.GuessInputFocus = {
 
       input.focus({preventScroll: true})
     })
-  },
-
-  shakeInput() {
-    const input = this.guessInput()
-
-    if (!input) return
-
-    input.classList.remove("guess-limit-shake")
-    void input.offsetWidth
-    input.classList.add("guess-limit-shake")
-    input.focus({preventScroll: true})
-  },
-
-  submitWouldHitLimit() {
-    return this.localSubmittedCount >= this.maxSubmittedCount()
-  },
-
-  submittedCount() {
-    return Number(this.el.dataset.submittedCount || 0)
-  },
-
-  maxSubmittedCount() {
-    return Number(this.el.dataset.maxSubmittedBubbles || 5)
   },
 
   guessInput() {
@@ -273,16 +244,12 @@ Hooks.TypingBubble = {
 
     const text = this.content.textContent || ""
     const width = this.el.clientWidth
-    const isSubmitted = this.el.classList.contains("is-submitted")
-    const measureKey = `${text}:${width}:${isSubmitted}`
+    const measureKey = `${text}:${width}`
 
     if (measureKey === this.lastMeasureKey) return
 
     this.lastMeasureKey = measureKey
-    this.el.classList.remove("is-scrolling")
     this.el.classList.remove("is-overflowing")
-    this.content.style.removeProperty("--typing-overflow")
-    this.content.style.removeProperty("--typing-duration")
 
     requestAnimationFrame(() => {
       const styles = window.getComputedStyle(this.el)
@@ -293,17 +260,6 @@ Hooks.TypingBubble = {
       if (overflow <= 4) return
 
       this.el.classList.add("is-overflowing")
-
-      if (
-        !this.el.classList.contains("is-submitted") ||
-        !this.el.classList.contains("is-animated")
-      ) {
-        return
-      }
-
-      this.content.style.setProperty("--typing-overflow", `${overflow}px`)
-      this.content.style.setProperty("--typing-duration", "2s")
-      this.el.classList.add("is-scrolling")
     })
   },
 }
