@@ -102,7 +102,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
         style={mobile_bubble_slot_style(index)}
       >
         <div :if={player = Enum.at(@typing_players, index)} class="relative h-full w-full">
-          <TypingBubble.typing_bubble
+          <TypingBubble.guess_burst
             :for={
               {bubble, bubble_index} <-
                 Enum.with_index(
@@ -112,9 +112,8 @@ defmodule LiveTriviaWeb.TriviaComponents do
             id={"mobile-submitted-bubble-#{player.player_id}-#{bubble.id}"}
             player={player}
             text={TypingBubble.text(bubble)}
-            submitted
             class={[
-              "absolute inset-x-0 top-0 w-full max-w-full rounded-2xl px-2.5 py-1.5 text-center text-[0.68rem] font-bold",
+              "inset-x-0 top-0 w-full text-[0.68rem]",
               mobile_submitted_bubble_z_index(bubble_index)
             ]}
           />
@@ -123,7 +122,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
             id={"mobile-live-bubble-#{player.player_id}"}
             player={player}
             text={TypingBubble.active_text(Map.get(@typing_by_player, player.player_id))}
-            class="absolute left-0 top-0 z-[60] w-full max-w-full rounded-2xl px-2.5 py-1.5 text-center text-[0.68rem] font-bold"
+            class="absolute left-0 top-0 z-[60] w-full max-w-full rounded-full px-2.5 py-1.5 text-center text-[0.68rem] font-bold"
           />
         </div>
       </div>

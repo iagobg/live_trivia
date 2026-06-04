@@ -106,6 +106,8 @@ defmodule LiveTriviaWeb.AdminLive do
   @synthetic_test_cycles 5
   @synthetic_keystroke_limit 18
   @synthetic_tick_ms 70
+  @synthetic_submitted_clear_delay_ms 2_000
+  @typing_flush_ms 33
 
   @impl true
   def mount(%{"room_id" => room_id}, session, socket) do
@@ -158,6 +160,7 @@ defmodule LiveTriviaWeb.AdminLive do
   @impl true
   def terminate(_reason, socket) do
     if socket.assigns[:room_id] && socket.assigns[:player_id] do
+      untrack_synthetic_players(socket.assigns.room_id, socket.assigns[:synthetic_players] || [])
       Presence.untrack(self(), admin_topic(socket.assigns.room_id), socket.assigns.player_id)
       Lobby.admin_left(socket.assigns.room_id)
     end
@@ -175,13 +178,16 @@ defmodule LiveTriviaWeb.AdminLive do
   def handle_event("run_synthetic_render_test", _params, socket) do
     synthetic_players = synthetic_players()
     Process.send_after(self(), {:synthetic_render_tick, 0, 1}, @synthetic_tick_ms)
+    untrack_synthetic_players(socket.assigns.room_id, socket.assigns.synthetic_players)
+    track_synthetic_players(socket.assigns.room_id, synthetic_players)
 
     {:noreply,
      socket
      |> clear_synthetic_state()
      |> assign(:synthetic_players, synthetic_players)
+     |> assign(:players, players(socket.assigns.room_id))
      |> assign(:synthetic_test_running?, true)
-     |> assign_synthetic_keystroke(synthetic_players, 0, 0)}
+     |> broadcast_synthetic_keystroke(synthetic_players, 0, 0)}
   end
 
   def handle_event("load_json", %{"quiz" => %{"json" => json}}, socket) do
@@ -255,11 +261,11 @@ defmodule LiveTriviaWeb.AdminLive do
     {socket, next_message} =
       if keystroke <= max_keystrokes do
         {
-          assign_synthetic_keystroke(socket, synthetic_players, cycle, keystroke),
+          broadcast_synthetic_keystroke(socket, synthetic_players, cycle, keystroke),
           {:synthetic_render_tick, cycle, keystroke + 1}
         }
       else
-        socket = assign_synthetic_submit(socket, synthetic_players, cycle)
+        socket = broadcast_synthetic_submit(socket, synthetic_players, cycle)
         next_cycle = cycle + 1
 
         {
@@ -283,6 +289,19 @@ defmodule LiveTriviaWeb.AdminLive do
      )}
   end
 
+  def handle_info({:synthetic_clear_submitted, player_id, bubble_id}, socket) do
+    broadcast_synthetic_typing(
+      socket.assigns.room_id,
+      player_id,
+      "",
+      nil,
+      :remove_submitted,
+      bubble_id
+    )
+
+    {:noreply, socket}
+  end
+
   def handle_info({:player_typing, player_id, text, guess_result}, socket) do
     handle_info({:player_typing, player_id, text, guess_result, :typing}, socket)
   end
@@ -292,29 +311,31 @@ defmodule LiveTriviaWeb.AdminLive do
   end
 
   def handle_info({:player_typing, player_id, text, guess_result, mode, bubble_id}, socket) do
-    typing_by_player =
-      TypingBubble.update_player_bubbles(
+    {:noreply, queue_typing_update(socket, {player_id, text, guess_result, mode, bubble_id})}
+  end
+
+  def handle_info(:flush_typing_updates, socket) do
+    updates =
+      socket.private
+      |> Map.get(:pending_typing_updates, [])
+      |> Enum.reverse()
+
+    {typing_by_player, guess_results} =
+      TypingBubble.apply_updates(
         socket.assigns.typing_by_player,
-        player_id,
-        mode,
-        text,
-        bubble_id
+        socket.assigns.guess_results,
+        updates
       )
 
-    socket = assign(socket, :typing_by_player, typing_by_player)
-
     socket =
-      if mode == :remove_submitted do
-        socket
-      else
-        assign(
-          socket,
-          :guess_results,
-          Map.put(socket.assigns.guess_results, player_id, guess_result)
-        )
-      end
+      socket
+      |> put_typing_private(:pending_typing_updates, [])
+      |> put_typing_private(:typing_flush_scheduled?, false)
 
-    {:noreply, socket}
+    {:noreply,
+     socket
+     |> assign(:typing_by_player, typing_by_player)
+     |> assign(:guess_results, guess_results)}
   end
 
   @impl true
@@ -328,7 +349,7 @@ defmodule LiveTriviaWeb.AdminLive do
           validation_error={@validation_error}
           synthetic_test_running?={@synthetic_test_running?}
         />
-        <.podium game_state={@game_state} players={admin_players(@players, @synthetic_players)} />
+        <.podium game_state={@game_state} players={@players} />
       <% else %>
         <.admin_header
           room={@room}
@@ -338,7 +359,7 @@ defmodule LiveTriviaWeb.AdminLive do
         />
         <.game_stage
           game_state={@game_state}
-          players={admin_players(@players, @synthetic_players)}
+          players={@players}
           current_player_id={nil}
           typing_by_player={@typing_by_player}
           guess_results={@guess_results}
@@ -485,13 +506,6 @@ defmodule LiveTriviaWeb.AdminLive do
   defp admin_topic(room_id), do: "admins:#{room_id}"
   defp typing_topic(room_id), do: "typing:#{room_id}"
 
-  defp admin_players(players, synthetic_players) do
-    players
-    |> Enum.reject(&String.starts_with?(&1.player_id, "synthetic-"))
-    |> Kernel.++(synthetic_players)
-    |> Enum.take(@synthetic_player_count)
-  end
-
   defp synthetic_players do
     colors = PlayerColors.all()
 
@@ -505,72 +519,90 @@ defmodule LiveTriviaWeb.AdminLive do
     end)
   end
 
-  defp assign_synthetic_keystroke(socket, synthetic_players, cycle, keystroke) do
-    {typing_by_player, guess_results} =
-      Enum.reduce(
-        synthetic_players,
-        {socket.assigns.typing_by_player, socket.assigns.guess_results},
-        fn player, {typing_by_player, guess_results} ->
-          typing_text =
-            player
-            |> synthetic_guess_text(cycle)
-            |> synthetic_keystroke_prefix(player, cycle, keystroke)
-
-          typing_by_player =
-            TypingBubble.update_player_bubbles(
-              typing_by_player,
-              player.player_id,
-              :typing,
-              typing_text,
-              nil
-            )
-
-          {typing_by_player,
-           Map.put(guess_results, player.player_id, synthetic_result(player, cycle))}
-        end
-      )
-
-    socket
-    |> assign(:typing_by_player, typing_by_player)
-    |> assign(:guess_results, guess_results)
+  defp track_synthetic_players(room_id, synthetic_players) do
+    Enum.each(synthetic_players, fn player ->
+      Presence.track(self(), players_topic(room_id), player.player_id, player)
+    end)
   end
 
-  defp assign_synthetic_submit(socket, synthetic_players, cycle) do
-    {typing_by_player, guess_results} =
-      Enum.reduce(
-        synthetic_players,
-        {socket.assigns.typing_by_player, socket.assigns.guess_results},
-        fn player, {typing_by_player, guess_results} ->
-          bubble_id = "synthetic-#{System.unique_integer([:positive, :monotonic])}"
-          guess_text = synthetic_guess_text(player, cycle)
-          result = synthetic_result(player, cycle)
+  defp untrack_synthetic_players(_room_id, []), do: :ok
 
-          typing_by_player =
-            TypingBubble.update_player_bubbles(
-              typing_by_player,
-              player.player_id,
-              :submitted,
-              guess_text,
-              bubble_id
-            )
+  defp untrack_synthetic_players(room_id, synthetic_players) do
+    Enum.each(synthetic_players, fn player ->
+      Presence.untrack(self(), players_topic(room_id), player.player_id)
+    end)
+  end
 
-          {typing_by_player, Map.put(guess_results, player.player_id, result)}
-        end
+  defp broadcast_synthetic_keystroke(socket, synthetic_players, cycle, keystroke) do
+    Enum.each(synthetic_players, fn player ->
+      typing_text =
+        player
+        |> synthetic_guess_text(cycle)
+        |> synthetic_keystroke_prefix(player, cycle, keystroke)
+
+      broadcast_synthetic_typing(
+        socket.assigns.room_id,
+        player.player_id,
+        typing_text,
+        synthetic_result(player, cycle),
+        :typing,
+        nil
       )
+    end)
 
     socket
-    |> assign(:typing_by_player, typing_by_player)
-    |> assign(:guess_results, guess_results)
+  end
+
+  defp broadcast_synthetic_submit(socket, synthetic_players, cycle) do
+    Enum.each(synthetic_players, fn player ->
+      bubble_id = "synthetic-#{System.unique_integer([:positive, :monotonic])}"
+      guess_text = synthetic_guess_text(player, cycle)
+
+      result =
+        Game.submit_guess(
+          socket.assigns.room_id,
+          player.player_id,
+          player.name,
+          guess_text
+        )
+
+      guess_result = (result && result.result) || synthetic_result(player, cycle)
+
+      broadcast_synthetic_typing(
+        socket.assigns.room_id,
+        player.player_id,
+        guess_text,
+        guess_result,
+        :submitted,
+        bubble_id
+      )
+
+      Process.send_after(
+        self(),
+        {:synthetic_clear_submitted, player.player_id, bubble_id},
+        @synthetic_submitted_clear_delay_ms
+      )
+    end)
+
+    socket
+  end
+
+  defp broadcast_synthetic_typing(room_id, player_id, text, guess_result, mode, bubble_id) do
+    Phoenix.PubSub.broadcast(
+      LiveTrivia.PubSub,
+      typing_topic(room_id),
+      {:player_typing, player_id, text, guess_result, mode, bubble_id}
+    )
   end
 
   defp synthetic_guess_text(player, cycle) do
     guesses = [
-      "portugal",
-      "paises baixos",
+      "montanha azul",
+      "paises baixos distante",
       "paralelepipedo muito comprido",
-      "tokyo",
-      "nitrogen",
-      "capital escondida"
+      "cidade inventada",
+      "elemento secreto",
+      "capital escondida longe"
     ]
 
     Enum.at(guesses, rem(cycle + synthetic_index(player), length(guesses)))
@@ -608,6 +640,24 @@ defmodule LiveTriviaWeb.AdminLive do
 
   defp reject_synthetic_keys(map) do
     Map.reject(map, fn {player_id, _value} -> String.starts_with?(player_id, "synthetic-") end)
+  end
+
+  defp queue_typing_update(socket, update) do
+    pending = [update | Map.get(socket.private, :pending_typing_updates, [])]
+    flush_scheduled? = Map.get(socket.private, :typing_flush_scheduled?, false)
+
+    socket = put_typing_private(socket, :pending_typing_updates, pending)
+
+    if flush_scheduled? do
+      socket
+    else
+      Process.send_after(self(), :flush_typing_updates, @typing_flush_ms)
+      put_typing_private(socket, :typing_flush_scheduled?, true)
+    end
+  end
+
+  defp put_typing_private(socket, key, value) do
+    %{socket | private: Map.put(socket.private, key, value)}
   end
 
   defp track_admin(room_id, player_id) do

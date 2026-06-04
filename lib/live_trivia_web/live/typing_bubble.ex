@@ -4,6 +4,26 @@ defmodule LiveTriviaWeb.TypingBubble do
   attr :id, :string, required: true
   attr :player, :map, required: true
   attr :text, :string, required: true
+  attr :class, :any, default: nil
+
+  def guess_burst(assigns) do
+    ~H"""
+    <div
+      id={@id}
+      class={[
+        "guess-burst pointer-events-none absolute overflow-hidden rounded-full border px-2 py-1 text-center text-xs font-semibold text-white opacity-0 shadow-lg",
+        @class
+      ]}
+      style={typing_bubble_style(@player)}
+    >
+      <span class="guess-burst-content">{@text}</span>
+    </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :player, :map, required: true
+  attr :text, :string, required: true
   attr :submitted, :boolean, default: false
   attr :class, :any, default: nil
 
@@ -92,6 +112,23 @@ defmodule LiveTriviaWeb.TypingBubble do
 
   def update_player_bubbles(typing_by_player, player_id, _mode, text, _bubble_id) do
     update_player_bubbles(typing_by_player, player_id, :typing, text, nil)
+  end
+
+  def apply_updates(typing_by_player, guess_results, updates) do
+    Enum.reduce(updates, {typing_by_player, guess_results}, fn
+      {player_id, text, guess_result, mode, bubble_id}, {typing_by_player, guess_results} ->
+        typing_by_player =
+          update_player_bubbles(typing_by_player, player_id, mode, text, bubble_id)
+
+        guess_results =
+          if mode == :remove_submitted do
+            guess_results
+          else
+            Map.put(guess_results, player_id, guess_result)
+          end
+
+        {typing_by_player, guess_results}
+    end)
   end
 
   def put_typing(entry, text) do

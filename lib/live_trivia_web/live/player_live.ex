@@ -10,6 +10,7 @@ defmodule LiveTriviaWeb.PlayerLive do
 
   @submitted_clear_delay_ms 2_000
   @max_visible_bubbles_per_player 5
+  @typing_flush_ms 33
 
   @impl true
   def mount(%{"room_id" => room_id}, session, socket) do
@@ -341,29 +342,31 @@ defmodule LiveTriviaWeb.PlayerLive do
   end
 
   def handle_info({:player_typing, player_id, text, guess_result, mode, bubble_id}, socket) do
-    typing_by_player =
-      TypingBubble.update_player_bubbles(
+    {:noreply, queue_typing_update(socket, {player_id, text, guess_result, mode, bubble_id})}
+  end
+
+  def handle_info(:flush_typing_updates, socket) do
+    updates =
+      socket.private
+      |> Map.get(:pending_typing_updates, [])
+      |> Enum.reverse()
+
+    {typing_by_player, guess_results} =
+      TypingBubble.apply_updates(
         socket.assigns.typing_by_player,
-        player_id,
-        mode,
-        text,
-        bubble_id
+        socket.assigns.guess_results,
+        updates
       )
 
-    socket = assign(socket, :typing_by_player, typing_by_player)
-
     socket =
-      if mode == :remove_submitted do
-        socket
-      else
-        assign(
-          socket,
-          :guess_results,
-          Map.put(socket.assigns.guess_results, player_id, guess_result)
-        )
-      end
+      socket
+      |> put_typing_private(:pending_typing_updates, [])
+      |> put_typing_private(:typing_flush_scheduled?, false)
 
-    {:noreply, socket}
+    {:noreply,
+     socket
+     |> assign(:typing_by_player, typing_by_player)
+     |> assign(:guess_results, guess_results)}
   end
 
   defp current_player_bubble_count(%Phoenix.LiveView.Socket{assigns: assigns}) do
@@ -402,6 +405,24 @@ defmodule LiveTriviaWeb.PlayerLive do
       end
 
     assign(socket, :input_text, "")
+  end
+
+  defp queue_typing_update(socket, update) do
+    pending = [update | Map.get(socket.private, :pending_typing_updates, [])]
+    flush_scheduled? = Map.get(socket.private, :typing_flush_scheduled?, false)
+
+    socket = put_typing_private(socket, :pending_typing_updates, pending)
+
+    if flush_scheduled? do
+      socket
+    else
+      Process.send_after(self(), :flush_typing_updates, @typing_flush_ms)
+      put_typing_private(socket, :typing_flush_scheduled?, true)
+    end
+  end
+
+  defp put_typing_private(socket, key, value) do
+    %{socket | private: Map.put(socket.private, key, value)}
   end
 
   @impl true
@@ -493,7 +514,7 @@ defmodule LiveTriviaWeb.PlayerLive do
                     disabled={!can_input?(@game_state, @guess_result)}
                     placeholder={guess_placeholder(@game_state, @guess_result)}
                     autocomplete="off"
-                    phx-throttle="80"
+                    phx-throttle="40"
                     class={[
                       "w-full rounded-xl border-2 py-4 pl-5 pr-24 text-lg font-medium text-white outline-none transition-all disabled:cursor-not-allowed disabled:opacity-50",
                       input_result_class(@guess_result)

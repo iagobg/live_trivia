@@ -41,7 +41,7 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
         </div>
       </div>
       <div class="absolute -bottom-8 left-1/2 h-44 w-32 -translate-x-1/2 whitespace-nowrap">
-        <TypingBubble.typing_bubble
+        <TypingBubble.guess_burst
           :for={
             {bubble, index} <-
               Enum.with_index(TypingBubble.submitted_bubbles(@typing))
@@ -49,9 +49,8 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
           id={"desktop-submitted-bubble-#{@player.player_id}-#{bubble.id}"}
           player={@player}
           text={TypingBubble.text(bubble)}
-          submitted
           class={[
-            "absolute inset-x-0 top-0 w-32 max-w-32 rounded-lg px-2 py-1 text-xs",
+            "inset-x-0 top-0 w-32",
             submitted_bubble_z_index(index)
           ]}
         />
@@ -60,7 +59,7 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
             id={"desktop-live-bubble-#{@player.player_id}"}
             player={@player}
             text={TypingBubble.active_text(@typing)}
-            class="w-32 max-w-32 rounded-lg px-2 py-1 text-xs"
+            class="w-32 max-w-32 rounded-full px-2 py-1 text-xs"
           />
         </div>
       </div>

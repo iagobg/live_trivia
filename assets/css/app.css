@@ -188,6 +188,17 @@
   animation: typing-bubble-scroll var(--typing-duration, 2s) linear 0ms 1 forwards;
 }
 
+.guess-burst {
+  animation: guess-burst-pop 900ms ease-out 0ms 1 forwards;
+}
+
+.guess-burst-content {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @keyframes hint-ticker-scroll {
   from {
     transform: translateX(0);
@@ -217,6 +228,28 @@
   to {
     opacity: 0;
     translate: 0 -1rem;
+  }
+}
+
+@keyframes guess-burst-pop {
+  0% {
+    opacity: 0;
+    scale: 0.9 0.9;
+  }
+
+  18% {
+    opacity: 0.95;
+    scale: 1 1;
+  }
+
+  62% {
+    opacity: 0.72;
+    scale: 1.08 1.12;
+  }
+
+  100% {
+    opacity: 0;
+    scale: 1.42 1.28;
   }
 }
 
