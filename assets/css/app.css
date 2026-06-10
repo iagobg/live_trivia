@@ -104,6 +104,12 @@
 
 /* This file is for your main application CSS */
 
+html,
+body {
+  background: #030712;
+}
+
+
 .star {
   position: absolute;
   left: var(--x);
@@ -220,8 +226,7 @@
   }
 
   .keyboard-aware-answer-dock {
-    bottom: var(--app-keyboard-inset, 0px);
-    transition: bottom 160ms ease;
+    bottom: 0;
   }
 
   .keyboard-open .keyboard-aware-join-screen {
