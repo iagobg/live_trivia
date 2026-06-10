@@ -29,22 +29,6 @@ const Hooks = {}
 
 const mobileViewportQuery = window.matchMedia("(max-width: 639px)")
 const keyboardAwareSelector = ".keyboard-aware-player-screen, .keyboard-aware-join-screen"
-let keyboardPinFrame = null
-
-const pinMobileKeyboardViewport = () => {
-  if (!mobileViewportQuery.matches) return
-  if (!document.documentElement.classList.contains("keyboard-open")) return
-
-  const active = document.activeElement
-
-  if (!active || !active.closest(keyboardAwareSelector)) return
-  if (keyboardPinFrame) cancelAnimationFrame(keyboardPinFrame)
-
-  keyboardPinFrame = requestAnimationFrame(() => {
-    keyboardPinFrame = null
-    window.scrollTo(0, 0)
-  })
-}
 
 const updateVisualViewportVars = () => {
   const viewport = window.visualViewport
@@ -58,8 +42,6 @@ const updateVisualViewportVars = () => {
   root.style.setProperty("--app-viewport-offset-top", offsetTop + "px")
   root.style.setProperty("--app-keyboard-inset", keyboardInset + "px")
   root.classList.toggle("keyboard-open", mobileViewportQuery.matches && keyboardInset > 80)
-
-  pinMobileKeyboardViewport()
 }
 
 updateVisualViewportVars()
@@ -75,7 +57,6 @@ document.addEventListener("focusin", event => {
   if (!event.target.closest?.(keyboardAwareSelector)) return
 
   setTimeout(updateVisualViewportVars, 50)
-  setTimeout(pinMobileKeyboardViewport, 250)
 })
 
 Hooks.RoomPasswordToggle = {
@@ -112,6 +93,7 @@ Hooks.RoomPasswordToggle = {
 Hooks.PlayerProfileForm = {
   mounted() {
     this.capture()
+    this.focusAutofocusInput()
   },
 
   beforeUpdate() {
@@ -141,9 +123,19 @@ Hooks.PlayerProfileForm = {
     input.value = this.nameValue
 
     if (this.hadFocus) {
-      input.focus()
+      input.focus({preventScroll: true})
       input.setSelectionRange(this.selectionStart, this.selectionEnd)
     }
+  },
+
+  focusAutofocusInput() {
+    requestAnimationFrame(() => {
+      const input = this.nameInput()
+
+      if (input?.hasAttribute("autofocus")) {
+        input.focus({preventScroll: true})
+      }
+    })
   },
 
   nameInput() {
