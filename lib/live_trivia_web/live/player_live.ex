@@ -434,9 +434,9 @@ defmodule LiveTriviaWeb.PlayerLive do
           >
             <button
               phx-click="leave_room"
-              class="absolute right-4 top-4 z-50 rounded-lg border border-gray-700 bg-gray-900/90 px-3 py-1.5 text-sm font-semibold text-gray-200 hover:border-indigo-500"
+              class="absolute right-3 top-3 z-50 flex h-11 w-14 items-center justify-center rounded-lg border border-gray-700 bg-gray-900/90 text-xs font-bold text-gray-200 shadow-lg transition hover:border-indigo-500 hover:text-white sm:right-4 sm:top-4 sm:h-auto sm:w-auto sm:px-3 sm:py-1.5 sm:text-sm sm:font-semibold"
             >
-              Leave Room
+              Leave
             </button>
 
             <div

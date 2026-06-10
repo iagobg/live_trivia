@@ -13,7 +13,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
 
   def game_stage(assigns) do
     ~H"""
-    <div class="relative min-h-[var(--app-viewport-height,100svh)] overflow-hidden bg-gray-950 text-white sm:min-h-screen">
+    <div class="keyboard-aware-player-screen relative min-h-[var(--app-viewport-height,100svh)] overflow-hidden bg-gray-950 text-white sm:min-h-screen">
       <div class="absolute inset-0 opacity-30">
         <div
           :for={i <- 1..60}
