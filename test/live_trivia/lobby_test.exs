@@ -83,6 +83,24 @@ defmodule LiveTrivia.LobbyTest do
     on_exit(fn -> Lobby.close_room(room.id) end)
   end
 
+  test "closes standby rooms when the admin leaves" do
+    admin_id = "admin-#{System.unique_integer([:positive])}"
+    {:ok, room} = Lobby.create_room("Admin room", admin_id)
+
+    {:ok, _ref} =
+      LiveTriviaWeb.Presence.track(self(), "admins:#{room.id}", admin_id, %{
+        player_id: admin_id
+      })
+
+    assert Enum.any?(Lobby.list_rooms(), &(&1.id == room.id))
+
+    LiveTriviaWeb.Presence.untrack(self(), "admins:#{room.id}", admin_id)
+    Lobby.admin_left(room.id)
+    _ = :sys.get_state(Lobby)
+
+    refute Enum.any?(Lobby.list_rooms(), &(&1.id == room.id))
+  end
+
   defp create_room! do
     {:ok, room} = Lobby.create_room("Test room", "admin-#{System.unique_integer([:positive])}")
     room

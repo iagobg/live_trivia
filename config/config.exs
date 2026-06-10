@@ -8,7 +8,8 @@
 import Config
 
 config :live_trivia,
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  typing_bubble_animation?: true
 
 # Configure the endpoint
 config :live_trivia, LiveTriviaWeb.Endpoint,

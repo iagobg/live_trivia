@@ -1,6 +1,9 @@
 defmodule LiveTriviaWeb.TriviaComponents do
   use LiveTriviaWeb, :html
 
+  alias LiveTriviaWeb.ResultColors
+  alias LiveTriviaWeb.TypingBubble
+
   attr :game_state, :map, required: true
   attr :players, :list, required: true
   attr :current_player_id, :any, default: nil
@@ -19,7 +22,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
         />
       </div>
 
-      <div class="relative z-10 flex min-h-screen items-center justify-center px-4 py-20">
+      <div class="relative z-10 flex min-h-[100svh] items-start justify-center px-4 pb-36 pt-16 sm:min-h-screen sm:items-center sm:py-20">
         <.player_orbit
           players={@players}
           game_state={@game_state}
@@ -28,9 +31,101 @@ defmodule LiveTriviaWeb.TriviaComponents do
           guess_results={@guess_results}
         />
         <.central_hub game_state={@game_state} players={@players} />
+        <.mobile_player_roster
+          players={@players}
+          game_state={@game_state}
+          current_player_id={@current_player_id}
+          guess_results={@guess_results}
+        />
+        <.mobile_typing_bubbles players={@players} typing_by_player={@typing_by_player} />
       </div>
 
       {render_slot(@inner_block)}
+    </div>
+    """
+  end
+
+  attr :players, :list, required: true
+  attr :game_state, :map, required: true
+  attr :current_player_id, :any, default: nil
+  attr :guess_results, :map, default: %{}
+
+  def mobile_player_roster(assigns) do
+    ~H"""
+    <div class="pointer-events-none absolute inset-x-3 top-3 z-20 sm:hidden" aria-hidden="true">
+      <div class="grid max-w-[calc(100%-5.5rem)] grid-cols-8 gap-1.5">
+        <div
+          :for={player <- Enum.take(@players, 16)}
+          class="flex min-w-0 flex-col items-center gap-0.5"
+        >
+          <div
+            class={[
+              "flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-black text-white shadow-lg",
+              Map.get(@guess_results, player.player_id) == :correct && "scale-110"
+            ]}
+            style={mobile_player_avatar_style(player, Map.get(@guess_results, player.player_id))}
+          >
+            {String.first(player.name) |> String.upcase()}
+          </div>
+          <div class={[
+            "max-w-10 truncate rounded-full px-1 text-[0.55rem] font-bold leading-3",
+            player.player_id == @current_player_id && "bg-white/15 text-white",
+            player.player_id != @current_player_id && "text-gray-400"
+          ]}>
+            {Map.get(@game_state.player_scores, player.player_id, 0)}
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :players, :list, required: true
+  attr :typing_by_player, :map, default: %{}
+
+  def mobile_typing_bubbles(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :typing_players,
+        Enum.filter(
+          assigns.players,
+          &(TypingBubble.visible_count(Map.get(assigns.typing_by_player, &1.player_id)) > 0)
+        )
+      )
+
+    ~H"""
+    <div class="pointer-events-none absolute inset-0 z-20 sm:hidden" aria-hidden="true">
+      <div
+        :for={index <- 0..15}
+        class="absolute h-44 w-24"
+        style={mobile_bubble_slot_style(index)}
+      >
+        <div :if={player = Enum.at(@typing_players, index)} class="relative h-full w-full">
+          <TypingBubble.guess_burst
+            :for={
+              {bubble, bubble_index} <-
+                Enum.with_index(
+                  TypingBubble.submitted_bubbles(Map.get(@typing_by_player, player.player_id))
+                )
+            }
+            id={"mobile-submitted-bubble-#{player.player_id}-#{bubble.id}"}
+            player={player}
+            text={TypingBubble.text(bubble)}
+            class={[
+              "inset-x-0 top-0 w-full text-[0.68rem]",
+              mobile_submitted_bubble_z_index(bubble_index)
+            ]}
+          />
+          <TypingBubble.typing_bubble
+            :if={TypingBubble.active_text(Map.get(@typing_by_player, player.player_id)) != ""}
+            id={"mobile-live-bubble-#{player.player_id}"}
+            player={player}
+            text={TypingBubble.active_text(Map.get(@typing_by_player, player.player_id))}
+            class="absolute left-0 top-0 z-[60] w-full max-w-full rounded-full px-2.5 py-1.5 text-center text-[0.68rem] font-bold"
+          />
+        </div>
+      </div>
     </div>
     """
   end
@@ -45,7 +140,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
     assigns = assign(assigns, :count, max(length(assigns.players), 1))
 
     ~H"""
-    <div class="pointer-events-none absolute inset-0">
+    <div class="pointer-events-none absolute inset-0 hidden sm:block">
       <.live_component
         :for={{player, index} <- Enum.with_index(@players)}
         module={LiveTriviaWeb.PlayerOrbitComponent}
@@ -56,7 +151,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
         current_player_id={@current_player_id}
         score={Map.get(@game_state.player_scores, player.player_id, 0)}
         guess_result={Map.get(@guess_results, player.player_id)}
-        typing_text={Map.get(@typing_by_player, player.player_id, "")}
+        typing={Map.get(@typing_by_player, player.player_id)}
         leading={
           (@game_state.closest_guess && @game_state.closest_guess.player_id == player.player_id) ||
             false
@@ -90,7 +185,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
         data-server-now={@game_state.server_now}
         data-round={@game_state.current_index}
         data-duration="30000"
-        class="relative flex h-[340px] w-[340px] items-center justify-center sm:h-[360px] sm:w-[360px]"
+        class="relative flex h-[300px] w-[300px] items-center justify-center sm:h-[360px] sm:w-[360px]"
       >
         <svg
           width="360"
@@ -127,7 +222,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
         <div
           data-role="hub-shell"
           class={[
-            "relative flex h-[300px] w-[300px] flex-col items-center justify-center rounded-full border-2 bg-gray-900 px-7 py-7 text-center shadow-2xl sm:h-80 sm:w-80 sm:px-8 sm:py-8",
+            "relative flex h-[260px] w-[260px] flex-col items-center justify-center rounded-full border-2 bg-gray-900 px-6 py-6 text-center shadow-2xl sm:h-80 sm:w-80 sm:px-8 sm:py-8",
             if(@game_state.phase == :in_progress, do: "border-gray-700", else: "border-gray-800")
           ]}
         >
@@ -156,7 +251,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
             </div>
 
             <div :if={@current_question} class="w-full">
-              <p class="mx-auto line-clamp-2 max-w-56 text-sm font-bold leading-tight text-white">
+              <p class="mx-auto line-clamp-2 max-w-48 text-sm font-bold leading-tight text-white sm:max-w-56">
                 {@current_question.question}
               </p>
             </div>
@@ -165,7 +260,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
               <div>
                 <div
                   data-role="timer-value"
-                  class="text-4xl font-black leading-none text-green-500 tabular-nums"
+                  class="text-3xl font-black leading-none text-green-500 tabular-nums sm:text-4xl"
                 >
                   30
                 </div>
@@ -174,7 +269,10 @@ defmodule LiveTriviaWeb.TriviaComponents do
                 </div>
               </div>
               <div>
-                <div data-role="score-value" class="text-2xl font-black leading-none text-amber-400">
+                <div
+                  data-role="score-value"
+                  class="text-xl font-black leading-none text-amber-400 sm:text-2xl"
+                >
                   1000
                 </div>
                 <div class="mt-0.5 text-[0.62rem] uppercase tracking-widest text-gray-500">
@@ -183,12 +281,12 @@ defmodule LiveTriviaWeb.TriviaComponents do
               </div>
             </div>
 
-            <div class="flex h-[4.8rem] w-full flex-col justify-start gap-1 overflow-hidden">
+            <div class="grid h-[4.5rem] w-full grid-rows-3 gap-1 overflow-hidden">
               <div
                 :for={{hint, index} <- Enum.with_index(@visible_hints)}
                 id={"hint-ticker-#{@game_state.current_index}-#{index}"}
                 phx-hook="HintTicker"
-                class="hint-ticker h-5 overflow-hidden rounded-md border border-indigo-500/50 bg-indigo-600/70 px-2 py-0.5 text-[0.66rem] font-semibold leading-4 text-white"
+                class="hint-ticker flex h-5 items-center justify-center overflow-hidden rounded-md border border-indigo-500/50 bg-indigo-600/70 px-2 text-center text-[0.66rem] font-semibold leading-none text-white"
               >
                 <span class="hint-ticker-content">{hint}</span>
               </div>
@@ -378,5 +476,43 @@ defmodule LiveTriviaWeb.TriviaComponents do
 
   defp confetti_color(index) do
     Enum.at(["#FF6B6B", "#4ECDC4", "#FFEAA7", "#DDA0DD", "#45B7D1"], rem(index, 5))
+  end
+
+  defp mobile_bubble_slot_style(index) do
+    {left, top} =
+      Enum.at(
+        [
+          {6, 12},
+          {64, 9},
+          {12, 26},
+          {70, 25},
+          {4, 43},
+          {74, 44},
+          {13, 60},
+          {66, 62},
+          {33, 8},
+          {42, 24},
+          {31, 58},
+          {45, 72},
+          {8, 76},
+          {72, 78},
+          {24, 38},
+          {57, 48}
+        ],
+        index
+      )
+
+    "left: #{left}%; top: #{top}%;"
+  end
+
+  defp mobile_submitted_bubble_z_index(index) do
+    ["z-10", "z-20", "z-30", "z-40", "z-50"]
+    |> Enum.at(index, "z-10")
+  end
+
+  defp mobile_player_avatar_style(player, guess_result) do
+    border = ResultColors.result_color(guess_result, player.color)
+
+    "background-color: #{player.color}33; border-color: #{border}; box-shadow: 0 0 16px #{player.color}66;"
   end
 end

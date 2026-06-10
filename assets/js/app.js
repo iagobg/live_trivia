@@ -102,21 +102,95 @@ Hooks.PlayerProfileForm = {
 
 Hooks.GuessInputFocus = {
   mounted() {
+    this.onSubmit = this.onSubmit.bind(this)
+    this.onInput = this.onInput.bind(this)
+    this.onFocusOut = this.onFocusOut.bind(this)
+    this.recentlySubmittedText = null
+    this.focusFrame = null
+
+    this.el.addEventListener("submit", this.onSubmit)
+    this.el.addEventListener("input", this.onInput)
+    this.el.addEventListener("focusout", this.onFocusOut)
     this.focusInput()
   },
 
   updated() {
+    this.clearRehydratedSubmit()
     this.focusInput()
   },
 
-  focusInput() {
-    requestAnimationFrame(() => {
-      const input = this.el.querySelector("input[name='guess[text]']")
+  destroyed() {
+    if (this.focusFrame) cancelAnimationFrame(this.focusFrame)
+
+    this.el.removeEventListener("submit", this.onSubmit)
+    this.el.removeEventListener("input", this.onInput)
+    this.el.removeEventListener("focusout", this.onFocusOut)
+  },
+
+  onSubmit() {
+    const input = this.guessInput()
+
+    if (!input) return
+
+    this.focusInput(true)
+
+    const submittedText = input.value.trim()
+
+    if (!submittedText) return
+
+    this.recentlySubmittedText = submittedText
+
+    setTimeout(() => {
+      const currentInput = this.guessInput()
+
+      if (currentInput && currentInput.value.trim() === submittedText) {
+        currentInput.value = ""
+      }
+
+      this.focusInput(true)
+    }, 0)
+  },
+
+  onInput() {
+    const input = this.guessInput()
+
+    if (input && input.value.trim() !== "") {
+      this.recentlySubmittedText = null
+    }
+  },
+
+  clearRehydratedSubmit() {
+    const input = this.guessInput()
+
+    if (
+      input &&
+      this.recentlySubmittedText &&
+      input.value.trim() === this.recentlySubmittedText
+    ) {
+      input.value = ""
+    }
+  },
+
+  onFocusOut() {
+    this.focusInput()
+  },
+
+  focusInput(force = false) {
+    if (this.focusFrame) return
+
+    this.focusFrame = requestAnimationFrame(() => {
+      this.focusFrame = null
+      const input = this.guessInput()
 
       if (!input || input.disabled) return
+      if (!force && document.activeElement === input) return
 
       input.focus({preventScroll: true})
     })
+  },
+
+  guessInput() {
+    return this.el.querySelector("input[name='guess[text]']")
   },
 }
 
@@ -139,13 +213,53 @@ Hooks.HintTicker = {
     this.content.style.removeProperty("--hint-duration")
 
     requestAnimationFrame(() => {
-      const overflow = this.content.scrollWidth - this.el.clientWidth
+      const styles = window.getComputedStyle(this.el)
+      const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight)
+      const availableWidth = this.el.clientWidth - horizontalPadding
+      const overflow = this.content.scrollWidth - availableWidth
 
       if (overflow <= 4) return
 
       this.content.style.setProperty("--hint-overflow", `${overflow}px`)
       this.content.style.setProperty("--hint-duration", "4s")
       this.el.classList.add("is-scrolling")
+    })
+  },
+}
+
+Hooks.TypingBubble = {
+  mounted() {
+    this.content = this.el.querySelector(".typing-bubble-content")
+    this.lastMeasureKey = null
+    this.updateBubble()
+  },
+
+  updated() {
+    this.content = this.el.querySelector(".typing-bubble-content")
+    this.updateBubble()
+  },
+
+  updateBubble() {
+    if (!this.content) return
+
+    const text = this.content.textContent || ""
+    const width = this.el.clientWidth
+    const measureKey = `${text}:${width}`
+
+    if (measureKey === this.lastMeasureKey) return
+
+    this.lastMeasureKey = measureKey
+    this.el.classList.remove("is-overflowing")
+
+    requestAnimationFrame(() => {
+      const styles = window.getComputedStyle(this.el)
+      const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight)
+      const availableWidth = this.el.clientWidth - horizontalPadding
+      const overflow = this.content.scrollWidth - availableWidth
+
+      if (overflow <= 4) return
+
+      this.el.classList.add("is-overflowing")
     })
   },
 }

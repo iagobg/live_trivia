@@ -122,11 +122,41 @@
   display: inline-block;
   max-width: none;
   white-space: nowrap;
+  text-align: center;
   will-change: transform;
 }
 
 .hint-ticker.is-scrolling .hint-ticker-content {
   animation: hint-ticker-scroll var(--hint-duration, 10s) ease-in-out 20ms infinite;
+}
+
+.typing-bubble-content {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.typing-bubble.is-live .typing-bubble-content {
+  text-align: center;
+}
+
+.typing-bubble.is-live.is-overflowing .typing-bubble-content {
+  direction: rtl;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+}
+
+.guess-burst {
+  animation: guess-burst-pop 900ms ease-out 0ms 1 forwards;
+}
+
+.guess-burst-content {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes hint-ticker-scroll {
@@ -136,6 +166,28 @@
 
   to {
     transform: translateX(calc(-1 * var(--hint-overflow, 0px)));
+  }
+}
+
+@keyframes guess-burst-pop {
+  0% {
+    opacity: 0;
+    scale: 0.9 0.9;
+  }
+
+  18% {
+    opacity: 0.95;
+    scale: 1 1;
+  }
+
+  62% {
+    opacity: 0.72;
+    scale: 1.08 1.12;
+  }
+
+  100% {
+    opacity: 0;
+    scale: 1.42 1.28;
   }
 }
 
