@@ -214,25 +214,39 @@
 }
 
 @media (max-width: 639px) {
+  html.keyboard-open,
+  html.keyboard-open body {
+    height: var(--app-viewport-height, 100svh);
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .keyboard-aware-player-screen,
+  .keyboard-aware-join-screen {
+    height: var(--app-viewport-height, 100svh);
+    min-height: var(--app-viewport-height, 100svh);
+  }
+
   .keyboard-aware-answer-dock {
-    bottom: var(--app-keyboard-inset, 0px);
-    transition: bottom 160ms ease;
+    bottom: 0;
+    transform: translateY(calc(-1 * var(--app-keyboard-inset, 0px)));
+    transition: transform 160ms ease;
   }
 
   .keyboard-open .keyboard-aware-join-screen {
     align-items: flex-start;
-    min-height: var(--app-viewport-height, 100svh);
     padding-top: 1.5rem;
   }
 
   .keyboard-open .player-stage-content {
+    height: var(--app-viewport-height, 100svh);
     min-height: var(--app-viewport-height, 100svh);
     padding-top: 0.75rem;
-    padding-bottom: calc(var(--app-keyboard-inset, 0px) + 5.5rem);
+    padding-bottom: 5.5rem;
   }
 
   .keyboard-open #round-meter {
-    transform: scale(0.82);
+    transform: scale(0.78);
     transform-origin: top center;
   }
 }
