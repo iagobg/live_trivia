@@ -459,7 +459,7 @@ defmodule LiveTriviaWeb.PlayerLive do
 
             <div
               :if={@game_state.phase in [:in_progress, :results]}
-              class="fixed inset-x-0 bottom-0 z-30 w-full bg-gradient-to-t from-gray-950 via-gray-950/95 to-transparent px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-5 sm:absolute sm:bottom-8 sm:left-1/2 sm:max-w-md sm:-translate-x-1/2 sm:bg-none sm:p-0 sm:px-4"
+              class="keyboard-aware-answer-dock fixed inset-x-0 bottom-0 z-30 w-full bg-gradient-to-t from-gray-950 via-gray-950/95 to-transparent px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-5 sm:absolute sm:bottom-8 sm:left-1/2 sm:max-w-md sm:-translate-x-1/2 sm:bg-none sm:p-0 sm:px-4"
             >
               <div
                 :if={@game_state.phase == :results && @game_state.round_winner}
@@ -512,7 +512,7 @@ defmodule LiveTriviaWeb.PlayerLive do
           </.game_stage>
         <% end %>
       <% else %>
-        <main class="flex min-h-[100svh] items-center justify-center bg-gray-950 px-4 py-8 pb-[calc(env(safe-area-inset-bottom)+2rem)] text-white sm:min-h-screen">
+        <main class="keyboard-aware-join-screen flex min-h-[var(--app-viewport-height,100svh)] items-center justify-center bg-gray-950 px-4 py-8 pb-[calc(env(safe-area-inset-bottom)+2rem)] text-white sm:min-h-screen">
           <%= if @room_password_required? && !@room_unlocked? do %>
             <div class="w-full max-w-sm text-center">
               <div class="mb-6 sm:mb-8">

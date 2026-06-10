@@ -13,7 +13,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
 
   def game_stage(assigns) do
     ~H"""
-    <div class="relative min-h-screen overflow-hidden bg-gray-950 text-white">
+    <div class="relative min-h-[var(--app-viewport-height,100svh)] overflow-hidden bg-gray-950 text-white sm:min-h-screen">
       <div class="absolute inset-0 opacity-30">
         <div
           :for={i <- 1..60}
@@ -22,7 +22,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
         />
       </div>
 
-      <div class="relative z-10 flex min-h-[100svh] items-start justify-center px-4 pb-36 pt-16 sm:min-h-screen sm:items-center sm:py-20">
+      <div class="player-stage-content relative z-10 flex min-h-[var(--app-viewport-height,100svh)] items-start justify-center px-4 pb-36 pt-16 sm:min-h-screen sm:items-center sm:py-20">
         <.player_orbit
           players={@players}
           game_state={@game_state}

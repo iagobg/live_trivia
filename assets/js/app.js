@@ -27,6 +27,28 @@ import topbar from "../vendor/topbar"
 
 const Hooks = {}
 
+const updateVisualViewportVars = () => {
+  const viewport = window.visualViewport
+  const height = viewport?.height || window.innerHeight
+  const offsetTop = viewport?.offsetTop || 0
+  const keyboardInset = Math.max(0, window.innerHeight - height - offsetTop)
+  const root = document.documentElement
+
+  root.style.setProperty("--app-viewport-height", height + "px")
+  root.style.setProperty("--app-keyboard-inset", keyboardInset + "px")
+  root.classList.toggle("keyboard-open", keyboardInset > 80)
+}
+
+updateVisualViewportVars()
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", updateVisualViewportVars)
+  window.visualViewport.addEventListener("scroll", updateVisualViewportVars)
+}
+
+window.addEventListener("resize", updateVisualViewportVars)
+window.addEventListener("orientationchange", updateVisualViewportVars)
+
 Hooks.RoomPasswordToggle = {
   mounted() {
     this.checkbox = this.el.querySelector("[data-role='room-password-enabled']")
