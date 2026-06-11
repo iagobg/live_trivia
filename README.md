@@ -1,32 +1,166 @@
-# LiveTrivia
+# Live Trivia
 
-To start your Phoenix server locally:
+Live Trivia is a Phoenix LiveView application for hosting real-time trivia rooms. An admin creates a room, loads a quiz, starts the rounds, and players join from their own devices to type guesses as the game state updates live.
 
-* Run `mix setup` to install and setup dependencies
-* Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+The app is designed around fast server-authoritative state updates with minimal JavaScript. Elixir/Phoenix owns room lifecycle, presence, scoring, timers, and broadcasts; JavaScript is used for client ergonomics such as focus handling, viewport adjustments, timer animation, and visual polish.
 
-Now you can visit [`localhost:3070`](http://localhost:4010) from your browser.
+## Features
 
-Ready to run in production? Please [check our deployment guides](https://hexdocs.pm/phoenix/deployment.html).
+- Create public or password-protected trivia rooms.
+- Join as a player with a name and color.
+- Host/admin screen for loading JSON questions, starting rounds, advancing rounds, resetting, and closing rooms.
+- Server-side round timers, scheduled hints, scoring, closest-guess fallback, and final podium.
+- Real-time player presence and typing bubbles through Phoenix PubSub and Presence.
+- Bounded in-memory room model suitable for live event/session style trivia games.
+- Optional synthetic 16-player render test from the admin screen.
 
-## Learn more
+## Project Structure
 
-* Official website: https://www.phoenixframework.org/
-* Guides: https://hexdocs.pm/phoenix/overview.html
-* Docs: https://hexdocs.pm/phoenix
-* Forum: https://elixirforum.com/c/phoenix-forum
-* Source: https://github.com/phoenixframework/phoenix
+Important application files:
 
+- `lib/live_trivia/application.ex` starts PubSub, Presence, the game registry, the per-room supervisor, the lobby server, and the Phoenix endpoint.
+- `lib/live_trivia/lobby.ex` owns room creation, room cleanup, room password verification, player capacity, color reservations, and public room summaries.
+- `lib/live_trivia/game.ex` owns the authoritative quiz state for each room: loaded questions, round phase, timers, hints, guesses, scores, and podium state.
+- `lib/live_trivia_web/live/lobby_live.ex` renders the room lobby and room creation form.
+- `lib/live_trivia_web/live/admin_live.ex` renders the host/admin experience.
+- `lib/live_trivia_web/live/player_live.ex` renders the player join and gameplay experience.
+- `lib/live_trivia_web/room_presence.ex` centralizes room topics, player/admin/color presence, and player listing helpers.
+- `lib/live_trivia_web/typing_queue.ex` batches high-frequency typing updates before assigning them in LiveViews.
+- `lib/live_trivia_web/live/trivia_components.ex` contains shared UI components for the game stage, player orbit, mobile roster, hints, and podium.
+- `assets/js/app.js` contains LiveView setup and the small client-side hooks used for focus, viewport, timer, hint, and animation behavior.
+- `assets/css/app.css` contains Tailwind CSS imports and custom styling.
+- `priv/static/robots.txt` and `lib/live_trivia_web/components/layouts/root.html.heex` contain basic SEO/static document metadata.
 
-## Dockerfile Set up
-* Run 
+## Requirements
+
+For local development:
+
+- Elixir and Erlang/OTP compatible with `mix.exs`.
+- Mix, Hex, and Rebar.
+- Docker, only if you want to build and run the container image.
+
+The project does not require a database for its current in-memory room/game model.
+
+## Running Locally
+
+Install dependencies and build local assets:
+
+```sh
+mix setup
 ```
+
+Start the Phoenix development server:
+
+```sh
+mix phx.server
+```
+
+Or run it inside IEx:
+
+```sh
+iex -S mix phx.server
+```
+
+Open the app at:
+
+```text
+http://localhost:3070
+```
+
+Useful local commands:
+
+```sh
+mix test
+mix format
+mix precommit
+```
+
+`mix precommit` is the project check used before finishing changes. It compiles with warnings as errors, checks for unused dependencies, formats, and runs the test suite.
+
+## Quiz JSON Format
+
+The admin screen accepts a JSON array of questions. Each item needs a `question` and `answer`; `hints` is optional and will be padded to five hints when fewer are provided.
+
+```json
+[
+  {
+    "question": "European capital",
+    "answer": "Paris",
+    "hints": [
+      "Largest city in France",
+      "Starts with P",
+      "_ I _ A _",
+      "City of Light",
+      "Sounds like pair is"
+    ]
+  }
+]
+```
+
+## Running With Docker
+
+Build the image:
+
+```sh
 docker build -t live-trivia .
+```
+
+Generate a production secret if you do not already have one:
+
+```sh
+mix phx.gen.secret
+```
+
+Run the container locally:
+
+```sh
+docker run --rm \
+  --name live-trivia \
+  -p 3070:3070 \
+  -e SECRET_KEY_BASE="replace-with-a-generated-secret" \
+  -e PHX_HOST="localhost" \
+  live-trivia
+```
+
+Then open:
+
+```text
+http://localhost:3070
+```
+
+For a deployed host, set `PHX_HOST` to the public hostname instead:
+
+```sh
 docker run -d \
   --name live-trivia \
   -p 3070:3070 \
-  -e SECRET_KEY_BASE="your_secret_key" \
-  -e PHX_HOST="your-domain.com" \
+  -e SECRET_KEY_BASE="replace-with-a-generated-secret" \
+  -e PHX_HOST="trivia.example.com" \
   live-trivia
-  ```
+```
 
+The Dockerfile sets `PHX_SERVER=true` and `PORT=3070` by default. You can override the port if needed:
+
+```sh
+docker run --rm \
+  -p 4000:4000 \
+  -e PORT=4000 \
+  -e SECRET_KEY_BASE="replace-with-a-generated-secret" \
+  -e PHX_HOST="localhost" \
+  live-trivia
+```
+
+## Runtime Environment Variables
+
+- `SECRET_KEY_BASE`: required in production/Docker releases. Generate with `mix phx.gen.secret`.
+- `PHX_HOST`: public hostname used by Phoenix URL generation in production. Defaults to `example.com` if not set, but you should set it for Docker/deployments.
+- `PORT`: HTTP port. Defaults to `3070`.
+- `PHX_SERVER`: enables the Phoenix server in releases. The Dockerfile sets this to `true`.
+- `TYPING_BUBBLE_ANIMATION`: set to `false` to disable submitted typing-bubble burst animation.
+- `DNS_CLUSTER_QUERY`: optional DNS clustering query used by Phoenix/DNSCluster in production.
+
+## Notes On Architecture
+
+Rooms and games are intentionally in memory. This keeps the live event flow simple and fast, but it also means rooms do not survive application restarts. The current limits are conservative: up to 16 rooms and 16 players per room.
+
+For the intended use case, Phoenix LiveView and Elixir handle the real-time coordination well: each game room has a dedicated `LiveTrivia.Game` process, room membership uses Presence, and state changes fan out over PubSub. The browser-side JavaScript remains focused on presentation details rather than game authority.
