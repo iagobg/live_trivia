@@ -75,10 +75,9 @@ defmodule LiveTrivia.Lobby do
   def active_count(room_id), do: player_count(room_id) + admin_count(room_id)
 
   def joinable?(room_id) do
-    case safe_game_state(room_id) do
-      %{phase: phase} when phase in [:standby, :loaded, :podium] -> true
-      _ -> false
-    end
+    room_id
+    |> safe_game_state()
+    |> joinable_state?()
   end
 
   @impl true
@@ -369,7 +368,7 @@ defmodule LiveTrivia.Lobby do
         admin_id: room.admin_id,
         phase: room_phase(game_state),
         round_label: round_label(game_state),
-        joinable: joinable?(room.id),
+        joinable: joinable_state?(game_state),
         password_protected?: not is_nil(room.password_hash),
         player_count: max(player_count(room.id), map_size(room.player_colors)),
         admin_count: admin_count(room.id),
@@ -396,6 +395,9 @@ defmodule LiveTrivia.Lobby do
   end
 
   defp round_label(_game_state), do: nil
+
+  defp joinable_state?(%{phase: phase}) when phase in [:standby, :loaded, :podium], do: true
+  defp joinable_state?(_game_state), do: false
 
   defp safe_game_state(room_id) do
     LiveTrivia.Game.get_state(room_id)

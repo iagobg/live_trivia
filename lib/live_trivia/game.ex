@@ -71,12 +71,15 @@ defmodule LiveTrivia.Game do
 
   def handle_call(:start_quiz, _from, state), do: {:reply, :ignored, state}
 
-  def handle_call(:next_round, _from, state) do
+  def handle_call(:next_round, _from, %{phase: phase} = state)
+      when phase in [:in_progress, :results] do
     touch_room()
     state = advance_round(state, state.current_index)
     broadcast(state)
     {:reply, :ok, state}
   end
+
+  def handle_call(:next_round, _from, state), do: {:reply, :ignored, state}
 
   def handle_call(:force_reset, _from, state) do
     touch_room()

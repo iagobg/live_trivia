@@ -5,7 +5,8 @@ defmodule LiveTriviaWeb.AdminLive do
   alias LiveTrivia.Lobby
   alias LiveTrivia.PlayerColors
   alias LiveTriviaWeb.Presence
-  alias LiveTriviaWeb.TypingBubble
+  alias LiveTriviaWeb.RoomPresence
+  alias LiveTriviaWeb.TypingQueue
   import LiveTriviaWeb.TriviaComponents
 
   @example_questions [
@@ -107,8 +108,6 @@ defmodule LiveTriviaWeb.AdminLive do
   @synthetic_keystroke_limit 18
   @synthetic_tick_ms 70
   @synthetic_submitted_clear_delay_ms 2_000
-  @typing_flush_ms 33
-
   @impl true
   def mount(%{"room_id" => room_id}, session, socket) do
     player_id = Map.fetch!(session, "player_id")
@@ -127,10 +126,8 @@ defmodule LiveTriviaWeb.AdminLive do
       true ->
         if connected?(socket) do
           Game.subscribe(room_id)
-          Phoenix.PubSub.subscribe(LiveTrivia.PubSub, players_topic(room_id))
-          Phoenix.PubSub.subscribe(LiveTrivia.PubSub, room_topic(room_id))
-          Phoenix.PubSub.subscribe(LiveTrivia.PubSub, typing_topic(room_id))
-          track_admin(room_id, player_id)
+          RoomPresence.subscribe(room_id)
+          RoomPresence.track_admin(room_id, player_id)
           Lobby.touch_room(room_id)
         end
 
@@ -141,7 +138,7 @@ defmodule LiveTriviaWeb.AdminLive do
           |> assign(:room_id, room_id)
           |> assign(:player_id, player_id)
           |> assign(:game_state, Game.get_state(room_id))
-          |> assign(:players, players(room_id))
+          |> assign(:players, RoomPresence.players(room_id))
           |> assign(:synthetic_players, [])
           |> assign(:synthetic_test_running?, false)
           |> assign(:typing_by_player, %{})
@@ -161,7 +158,13 @@ defmodule LiveTriviaWeb.AdminLive do
   def terminate(_reason, socket) do
     if socket.assigns[:room_id] && socket.assigns[:player_id] do
       untrack_synthetic_players(socket.assigns.room_id, socket.assigns[:synthetic_players] || [])
-      Presence.untrack(self(), admin_topic(socket.assigns.room_id), socket.assigns.player_id)
+
+      Presence.untrack(
+        self(),
+        RoomPresence.admins_topic(socket.assigns.room_id),
+        socket.assigns.player_id
+      )
+
       Lobby.admin_left(socket.assigns.room_id)
     end
 
@@ -185,7 +188,7 @@ defmodule LiveTriviaWeb.AdminLive do
      socket
      |> clear_synthetic_state()
      |> assign(:synthetic_players, synthetic_players)
-     |> assign(:players, players(socket.assigns.room_id))
+     |> assign(:players, RoomPresence.players(socket.assigns.room_id))
      |> assign(:synthetic_test_running?, true)
      |> broadcast_synthetic_keystroke(synthetic_players, 0, 0)}
   end
@@ -252,7 +255,7 @@ defmodule LiveTriviaWeb.AdminLive do
   end
 
   def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff"}, socket),
-    do: {:noreply, assign(socket, :players, players(socket.assigns.room_id))}
+    do: {:noreply, assign(socket, :players, RoomPresence.players(socket.assigns.room_id))}
 
   def handle_info({:synthetic_render_tick, cycle, keystroke}, socket) do
     synthetic_players = socket.assigns.synthetic_players
@@ -311,31 +314,11 @@ defmodule LiveTriviaWeb.AdminLive do
   end
 
   def handle_info({:player_typing, player_id, text, guess_result, mode, bubble_id}, socket) do
-    {:noreply, queue_typing_update(socket, {player_id, text, guess_result, mode, bubble_id})}
+    {:noreply, TypingQueue.queue(socket, {player_id, text, guess_result, mode, bubble_id})}
   end
 
   def handle_info(:flush_typing_updates, socket) do
-    updates =
-      socket.private
-      |> Map.get(:pending_typing_updates, [])
-      |> Enum.reverse()
-
-    {typing_by_player, guess_results} =
-      TypingBubble.apply_updates(
-        socket.assigns.typing_by_player,
-        socket.assigns.guess_results,
-        updates
-      )
-
-    socket =
-      socket
-      |> put_typing_private(:pending_typing_updates, [])
-      |> put_typing_private(:typing_flush_scheduled?, false)
-
-    {:noreply,
-     socket
-     |> assign(:typing_by_player, typing_by_player)
-     |> assign(:guess_results, guess_results)}
+    {:noreply, TypingQueue.flush(socket)}
   end
 
   @impl true
@@ -493,19 +476,6 @@ defmodule LiveTriviaWeb.AdminLive do
     hints ++ Enum.map((length(hints) + 1)..5//1, &"Hint #{&1}")
   end
 
-  defp players(room_id) do
-    room_id
-    |> players_topic()
-    |> Presence.list()
-    |> Enum.map(fn {player_id, %{metas: [meta | _]}} -> Map.put(meta, :player_id, player_id) end)
-    |> Enum.sort_by(& &1.joined_at)
-  end
-
-  defp players_topic(room_id), do: "players:#{room_id}"
-  defp room_topic(room_id), do: "room:#{room_id}"
-  defp admin_topic(room_id), do: "admins:#{room_id}"
-  defp typing_topic(room_id), do: "typing:#{room_id}"
-
   defp synthetic_players do
     colors = PlayerColors.all()
 
@@ -521,7 +491,7 @@ defmodule LiveTriviaWeb.AdminLive do
 
   defp track_synthetic_players(room_id, synthetic_players) do
     Enum.each(synthetic_players, fn player ->
-      Presence.track(self(), players_topic(room_id), player.player_id, player)
+      Presence.track(self(), RoomPresence.players_topic(room_id), player.player_id, player)
     end)
   end
 
@@ -529,7 +499,7 @@ defmodule LiveTriviaWeb.AdminLive do
 
   defp untrack_synthetic_players(room_id, synthetic_players) do
     Enum.each(synthetic_players, fn player ->
-      Presence.untrack(self(), players_topic(room_id), player.player_id)
+      Presence.untrack(self(), RoomPresence.players_topic(room_id), player.player_id)
     end)
   end
 
@@ -590,7 +560,7 @@ defmodule LiveTriviaWeb.AdminLive do
   defp broadcast_synthetic_typing(room_id, player_id, text, guess_result, mode, bubble_id) do
     Phoenix.PubSub.broadcast(
       LiveTrivia.PubSub,
-      typing_topic(room_id),
+      RoomPresence.typing_topic(room_id),
       {:player_typing, player_id, text, guess_result, mode, bubble_id}
     )
   end
@@ -640,31 +610,6 @@ defmodule LiveTriviaWeb.AdminLive do
 
   defp reject_synthetic_keys(map) do
     Map.reject(map, fn {player_id, _value} -> String.starts_with?(player_id, "synthetic-") end)
-  end
-
-  defp queue_typing_update(socket, update) do
-    pending = [update | Map.get(socket.private, :pending_typing_updates, [])]
-    flush_scheduled? = Map.get(socket.private, :typing_flush_scheduled?, false)
-
-    socket = put_typing_private(socket, :pending_typing_updates, pending)
-
-    if flush_scheduled? do
-      socket
-    else
-      Process.send_after(self(), :flush_typing_updates, @typing_flush_ms)
-      put_typing_private(socket, :typing_flush_scheduled?, true)
-    end
-  end
-
-  defp put_typing_private(socket, key, value) do
-    %{socket | private: Map.put(socket.private, key, value)}
-  end
-
-  defp track_admin(room_id, player_id) do
-    Presence.track(self(), admin_topic(room_id), player_id, %{
-      admin_id: player_id,
-      joined_at: System.system_time(:millisecond)
-    })
   end
 
   defp new_round?(old_state, new_state) do

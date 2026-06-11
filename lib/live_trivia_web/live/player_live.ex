@@ -5,11 +5,12 @@ defmodule LiveTriviaWeb.PlayerLive do
   alias LiveTrivia.Lobby
   alias LiveTrivia.PlayerColors
   alias LiveTriviaWeb.Presence
+  alias LiveTriviaWeb.RoomPresence
   alias LiveTriviaWeb.TypingBubble
+  alias LiveTriviaWeb.TypingQueue
   import LiveTriviaWeb.TriviaComponents
 
   @submitted_clear_delay_ms 2_000
-  @typing_flush_ms 33
 
   @impl true
   def mount(%{"room_id" => room_id}, session, socket) do
@@ -26,17 +27,15 @@ defmodule LiveTriviaWeb.PlayerLive do
 
     if connected?(socket) && room do
       Game.subscribe(room_id)
-      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, players_topic(room_id))
-      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, room_topic(room_id))
-      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, typing_topic(room_id))
+      RoomPresence.subscribe(room_id)
       Lobby.touch_room(room_id)
     end
 
     candidate_color = initial_color(room_id, player_id, player_color)
 
     if connected?(socket) && room && joinable && room_unlocked? && reservation == :ok do
-      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, color_topic(room_id))
-      track_color_selection(room_id, player_id, candidate_color)
+      Phoenix.PubSub.subscribe(LiveTrivia.PubSub, RoomPresence.color_topic(room_id))
+      RoomPresence.track_color_selection(room_id, player_id, candidate_color)
     end
 
     socket =
@@ -49,7 +48,7 @@ defmodule LiveTriviaWeb.PlayerLive do
       |> assign(:room_password_required?, room_password_required?)
       |> assign(:room_unlocked?, room_unlocked?)
       |> assign(:room_password_error, nil)
-      |> assign(:players, if(room && room_unlocked?, do: players(room_id), else: []))
+      |> assign(:players, if(room && room_unlocked?, do: RoomPresence.players(room_id), else: []))
       |> assign(:player_id, player_id)
       |> assign(:player_color, player_color)
       |> assign(:candidate_color, candidate_color)
@@ -177,9 +176,17 @@ defmodule LiveTriviaWeb.PlayerLive do
 
   def handle_event("leave_room", _params, socket) do
     if socket.assigns.player_name do
-      Presence.untrack(self(), players_topic(socket.assigns.room_id), socket.assigns.player_id)
+      Presence.untrack(
+        self(),
+        RoomPresence.players_topic(socket.assigns.room_id),
+        socket.assigns.player_id
+      )
     else
-      Presence.untrack(self(), color_topic(socket.assigns.room_id), socket.assigns.player_id)
+      Presence.untrack(
+        self(),
+        RoomPresence.color_topic(socket.assigns.room_id),
+        socket.assigns.player_id
+      )
     end
 
     Lobby.leave_room(socket.assigns.room_id, socket.assigns.player_id)
@@ -269,7 +276,7 @@ defmodule LiveTriviaWeb.PlayerLive do
            :guess_results,
            Map.put(socket.assigns.guess_results, socket.assigns.player_id, guess_result)
          )
-         |> assign(:players, players(socket.assigns.room_id))}
+         |> assign(:players, RoomPresence.players(socket.assigns.room_id))}
     end
   end
 
@@ -300,11 +307,11 @@ defmodule LiveTriviaWeb.PlayerLive do
 
   def handle_info(%Phoenix.Socket.Broadcast{topic: topic, event: "presence_diff"}, socket) do
     cond do
-      topic == players_topic(socket.assigns.room_id) ->
+      topic == RoomPresence.players_topic(socket.assigns.room_id) ->
         Lobby.touch_room(socket.assigns.room_id)
-        {:noreply, assign(socket, :players, players(socket.assigns.room_id))}
+        {:noreply, assign(socket, :players, RoomPresence.players(socket.assigns.room_id))}
 
-      topic == color_topic(socket.assigns.room_id) && !socket.assigns.player_name ->
+      topic == RoomPresence.color_topic(socket.assigns.room_id) && !socket.assigns.player_name ->
         {:noreply, assign_available_color(socket)}
 
       true ->
@@ -338,31 +345,11 @@ defmodule LiveTriviaWeb.PlayerLive do
   end
 
   def handle_info({:player_typing, player_id, text, guess_result, mode, bubble_id}, socket) do
-    {:noreply, queue_typing_update(socket, {player_id, text, guess_result, mode, bubble_id})}
+    {:noreply, TypingQueue.queue(socket, {player_id, text, guess_result, mode, bubble_id})}
   end
 
   def handle_info(:flush_typing_updates, socket) do
-    updates =
-      socket.private
-      |> Map.get(:pending_typing_updates, [])
-      |> Enum.reverse()
-
-    {typing_by_player, guess_results} =
-      TypingBubble.apply_updates(
-        socket.assigns.typing_by_player,
-        socket.assigns.guess_results,
-        updates
-      )
-
-    socket =
-      socket
-      |> put_typing_private(:pending_typing_updates, [])
-      |> put_typing_private(:typing_flush_scheduled?, false)
-
-    {:noreply,
-     socket
-     |> assign(:typing_by_player, typing_by_player)
-     |> assign(:guess_results, guess_results)}
+    {:noreply, TypingQueue.flush(socket)}
   end
 
   defp submitted_bubble_id do
@@ -391,24 +378,6 @@ defmodule LiveTriviaWeb.PlayerLive do
       end
 
     assign(socket, :input_text, "")
-  end
-
-  defp queue_typing_update(socket, update) do
-    pending = [update | Map.get(socket.private, :pending_typing_updates, [])]
-    flush_scheduled? = Map.get(socket.private, :typing_flush_scheduled?, false)
-
-    socket = put_typing_private(socket, :pending_typing_updates, pending)
-
-    if flush_scheduled? do
-      socket
-    else
-      Process.send_after(self(), :flush_typing_updates, @typing_flush_ms)
-      put_typing_private(socket, :typing_flush_scheduled?, true)
-    end
-  end
-
-  defp put_typing_private(socket, key, value) do
-    %{socket | private: Map.put(socket.private, key, value)}
   end
 
   @impl true
@@ -609,15 +578,6 @@ defmodule LiveTriviaWeb.PlayerLive do
     """
   end
 
-  defp track_player(socket, name) do
-    Presence.track(self(), players_topic(socket.assigns.room_id), socket.assigns.player_id, %{
-      player_id: socket.assigns.player_id,
-      name: name,
-      color: socket.assigns.candidate_color,
-      joined_at: System.system_time(:millisecond)
-    })
-  end
-
   defp reserve_player_slot(socket, room, true, room_id, player_id) do
     if connected?(socket) && room do
       Lobby.reserve_player(room_id, player_id)
@@ -639,9 +599,9 @@ defmodule LiveTriviaWeb.PlayerLive do
 
     case Lobby.join_room(room_id, player_id, name, color) do
       :ok ->
-        case track_player(socket, name) do
+        case RoomPresence.track_player(room_id, player_id, name, socket.assigns.candidate_color) do
           {:ok, _ref} ->
-            Presence.untrack(self(), color_topic(room_id), player_id)
+            Presence.untrack(self(), RoomPresence.color_topic(room_id), player_id)
             Lobby.touch_room(room_id)
 
             {:noreply,
@@ -649,7 +609,7 @@ defmodule LiveTriviaWeb.PlayerLive do
              |> assign(:player_name, name)
              |> assign(:player_color, color)
              |> assign(:taken_colors, taken_colors(room_id, player_id))
-             |> assign(:players, players(room_id))}
+             |> assign(:players, RoomPresence.players(room_id))}
 
           {:error, _reason} ->
             Lobby.leave_room(room_id, player_id)
@@ -700,7 +660,7 @@ defmodule LiveTriviaWeb.PlayerLive do
     case reserve_player_slot(socket, room, socket.assigns.joinable, room_id, player_id) do
       :ok ->
         if connected?(socket) do
-          Phoenix.PubSub.subscribe(LiveTrivia.PubSub, color_topic(room_id))
+          Phoenix.PubSub.subscribe(LiveTrivia.PubSub, RoomPresence.color_topic(room_id))
         end
 
         Lobby.touch_room(room_id)
@@ -709,7 +669,7 @@ defmodule LiveTriviaWeb.PlayerLive do
           socket
           |> assign(:room_unlocked?, true)
           |> assign(:room_password_error, nil)
-          |> assign(:players, players(room_id))
+          |> assign(:players, RoomPresence.players(room_id))
           |> assign_available_color()
 
         update_color_selection(socket, socket.assigns.candidate_color)
@@ -740,48 +700,13 @@ defmodule LiveTriviaWeb.PlayerLive do
     Phoenix.PubSub.broadcast_from(
       LiveTrivia.PubSub,
       self(),
-      typing_topic(socket.assigns.room_id),
+      RoomPresence.typing_topic(socket.assigns.room_id),
       {:player_typing, socket.assigns.player_id, typing_text, guess_result, mode, bubble_id}
     )
   end
 
-  defp players(room_id) do
-    room_id
-    |> players_topic()
-    |> Presence.list()
-    |> Enum.map(fn {player_id, %{metas: [meta | _]}} -> Map.put(meta, :player_id, player_id) end)
-    |> Enum.sort_by(& &1.joined_at)
-  end
-
-  defp players_topic(room_id), do: "players:#{room_id}"
-  defp room_topic(room_id), do: "room:#{room_id}"
-  defp color_topic(room_id), do: "color_select:#{room_id}"
-  defp typing_topic(room_id), do: "typing:#{room_id}"
-
-  defp track_color_selection(_room_id, _player_id, nil), do: :ok
-
-  defp track_color_selection(room_id, player_id, color) do
-    Presence.track(self(), color_topic(room_id), player_id, %{
-      color: color,
-      selected_at: System.system_time(:millisecond)
-    })
-  end
-
   defp update_color_selection(socket, color) do
-    case Presence.update(
-           self(),
-           color_topic(socket.assigns.room_id),
-           socket.assigns.player_id,
-           fn meta ->
-             Map.put(meta, :color, color)
-           end
-         ) do
-      {:ok, _ref} ->
-        :ok
-
-      {:error, _reason} ->
-        track_color_selection(socket.assigns.room_id, socket.assigns.player_id, color)
-    end
+    RoomPresence.update_color_selection(socket.assigns.room_id, socket.assigns.player_id, color)
   end
 
   defp initial_color(nil, _player_id, fallback), do: fallback
@@ -818,29 +743,8 @@ defmodule LiveTriviaWeb.PlayerLive do
   defp taken_colors(nil, _player_id), do: []
 
   defp taken_colors(room_id, player_id) do
-    player_colors =
-      room_id
-      |> players_topic()
-      |> Presence.list()
-      |> Enum.flat_map(fn
-        {^player_id, _presence} ->
-          []
-
-        {_id, %{metas: metas}} ->
-          Enum.map(metas, & &1.color)
-      end)
-
-    selected_colors =
-      room_id
-      |> color_topic()
-      |> Presence.list()
-      |> Enum.flat_map(fn
-        {^player_id, _presence} ->
-          []
-
-        {_id, %{metas: metas}} ->
-          Enum.map(metas, & &1.color)
-      end)
+    player_colors = RoomPresence.player_colors(room_id, player_id)
+    selected_colors = RoomPresence.selected_colors(room_id, player_id)
 
     reserved_colors = Lobby.taken_player_colors(room_id, player_id)
 
