@@ -6,8 +6,6 @@ defmodule LiveTriviaWeb.PlayerLive do
   alias LiveTrivia.PlayerColors
   alias LiveTriviaWeb.Presence
   alias LiveTriviaWeb.RoomPresence
-  alias LiveTriviaWeb.TypingBubble
-  alias LiveTriviaWeb.TypingQueue
   import LiveTriviaWeb.TriviaComponents
 
   @submitted_clear_delay_ms 2_000
@@ -60,8 +58,6 @@ defmodule LiveTriviaWeb.PlayerLive do
       |> assign(:player_name, nil)
       |> assign(:input_text, "")
       |> assign(:guess_result, nil)
-      |> assign(:typing_by_player, %{})
-      |> assign(:guess_results, %{})
       |> assign(:previous_round, nil)
 
     cond do
@@ -198,35 +194,6 @@ defmodule LiveTriviaWeb.PlayerLive do
      |> push_navigate(to: ~p"/")}
   end
 
-  def handle_event("typing", %{"guess" => %{"text" => text}}, socket) do
-    text = String.slice(text, 0, 80)
-
-    socket =
-      if socket.assigns.player_name do
-        typing_by_player =
-          TypingBubble.update_player_bubbles(
-            socket.assigns.typing_by_player,
-            socket.assigns.player_id,
-            :typing,
-            text,
-            nil
-          )
-
-        broadcast_typing(socket, text, socket.assigns.guess_result, :typing)
-        assign(socket, :typing_by_player, typing_by_player)
-      else
-        socket
-      end
-
-    {:noreply, assign(socket, :input_text, text)}
-  end
-
-  def handle_event("typing", %{"guess" => text}, socket) when is_binary(text) do
-    handle_event("typing", %{"guess" => %{"text" => text}}, socket)
-  end
-
-  def handle_event("typing", _params, socket), do: {:noreply, socket}
-
   def handle_event("submit_guess", %{"guess" => %{"text" => text}}, socket) do
     text = String.trim(text)
 
@@ -250,7 +217,7 @@ defmodule LiveTriviaWeb.PlayerLive do
 
         guess_result = result && result.result
 
-        broadcast_typing(socket, text, guess_result, :submitted, bubble_id)
+        broadcast_guess_submitted(socket, text, bubble_id)
 
         Process.send_after(
           self(),
@@ -262,20 +229,6 @@ defmodule LiveTriviaWeb.PlayerLive do
          socket
          |> assign(:guess_result, guess_result)
          |> assign(:input_text, "")
-         |> assign(
-           :typing_by_player,
-           TypingBubble.update_player_bubbles(
-             socket.assigns.typing_by_player,
-             socket.assigns.player_id,
-             :submitted,
-             text,
-             bubble_id
-           )
-         )
-         |> assign(
-           :guess_results,
-           Map.put(socket.assigns.guess_results, socket.assigns.player_id, guess_result)
-         )
          |> assign(:players, RoomPresence.players(socket.assigns.room_id))}
     end
   end
@@ -284,13 +237,11 @@ defmodule LiveTriviaWeb.PlayerLive do
   def handle_info({:game_state, game_state}, socket) do
     socket =
       if new_round?(socket.assigns.game_state, game_state) && socket.assigns.player_name do
-        broadcast_typing(socket, "", nil, :typing)
+        broadcast_typing(socket, "")
 
         socket
         |> assign(:input_text, "")
         |> assign(:guess_result, nil)
-        |> assign(:typing_by_player, %{})
-        |> assign(:guess_results, %{})
       else
         socket
       end
@@ -319,37 +270,9 @@ defmodule LiveTriviaWeb.PlayerLive do
     end
   end
 
-  def handle_info({:clear_submitted_typing, player_id, bubble_id}, socket) do
-    broadcast_typing(socket, "", nil, :remove_submitted, bubble_id)
-
-    {:noreply,
-     assign(
-       socket,
-       :typing_by_player,
-       TypingBubble.update_player_bubbles(
-         socket.assigns.typing_by_player,
-         player_id,
-         :remove_submitted,
-         "",
-         bubble_id
-       )
-     )}
-  end
-
-  def handle_info({:player_typing, player_id, text, guess_result}, socket) do
-    handle_info({:player_typing, player_id, text, guess_result, :typing}, socket)
-  end
-
-  def handle_info({:player_typing, player_id, text, guess_result, mode}, socket) do
-    handle_info({:player_typing, player_id, text, guess_result, mode, nil}, socket)
-  end
-
-  def handle_info({:player_typing, player_id, text, guess_result, mode, bubble_id}, socket) do
-    {:noreply, TypingQueue.queue(socket, {player_id, text, guess_result, mode, bubble_id})}
-  end
-
-  def handle_info(:flush_typing_updates, socket) do
-    {:noreply, TypingQueue.flush(socket)}
+  def handle_info({:clear_submitted_typing, _player_id, bubble_id}, socket) do
+    broadcast_guess_cleared(socket, bubble_id)
+    {:noreply, socket}
   end
 
   defp submitted_bubble_id do
@@ -360,19 +283,9 @@ defmodule LiveTriviaWeb.PlayerLive do
   defp clear_guess_input(socket) do
     socket =
       if socket.assigns.player_name do
-        broadcast_typing(socket, "", socket.assigns.guess_result, :typing)
+        broadcast_typing(socket, "")
 
-        assign(
-          socket,
-          :typing_by_player,
-          TypingBubble.update_player_bubbles(
-            socket.assigns.typing_by_player,
-            socket.assigns.player_id,
-            :typing,
-            "",
-            nil
-          )
-        )
+        socket
       else
         socket
       end
@@ -398,8 +311,7 @@ defmodule LiveTriviaWeb.PlayerLive do
             game_state={@game_state}
             players={@players}
             current_player_id={@player_id}
-            typing_by_player={@typing_by_player}
-            guess_results={@guess_results}
+            room_id={@room_id}
           >
             <button
               phx-click="leave_room"
@@ -450,7 +362,6 @@ defmodule LiveTriviaWeb.PlayerLive do
                 for={%{}}
                 as={:guess}
                 id="guess-form"
-                phx-change="typing"
                 phx-submit="submit_guess"
                 phx-hook="GuessInputFocus"
               >
@@ -458,7 +369,6 @@ defmodule LiveTriviaWeb.PlayerLive do
                   <input
                     type="text"
                     name="guess[text]"
-                    value={@input_text}
                     disabled={!can_input?(@game_state, @guess_result)}
                     placeholder={guess_placeholder(@game_state, @guess_result)}
                     autocomplete="off"
@@ -696,12 +606,27 @@ defmodule LiveTriviaWeb.PlayerLive do
     end
   end
 
-  defp broadcast_typing(socket, typing_text, guess_result, mode, bubble_id \\ nil) do
-    Phoenix.PubSub.broadcast_from(
-      LiveTrivia.PubSub,
-      self(),
+  defp broadcast_typing(socket, typing_text) do
+    LiveTriviaWeb.Endpoint.broadcast(
       RoomPresence.typing_topic(socket.assigns.room_id),
-      {:player_typing, socket.assigns.player_id, typing_text, guess_result, mode, bubble_id}
+      "typing",
+      %{p: socket.assigns.player_id, t: typing_text}
+    )
+  end
+
+  defp broadcast_guess_submitted(socket, text, bubble_id) do
+    LiveTriviaWeb.Endpoint.broadcast(
+      RoomPresence.typing_topic(socket.assigns.room_id),
+      "guess_submitted",
+      %{p: socket.assigns.player_id, t: text, b: bubble_id}
+    )
+  end
+
+  defp broadcast_guess_cleared(socket, bubble_id) do
+    LiveTriviaWeb.Endpoint.broadcast(
+      RoomPresence.typing_topic(socket.assigns.room_id),
+      "guess_cleared",
+      %{p: socket.assigns.player_id, b: bubble_id}
     )
   end
 

@@ -6,7 +6,6 @@ defmodule LiveTriviaWeb.AdminLive do
   alias LiveTrivia.PlayerColors
   alias LiveTriviaWeb.Presence
   alias LiveTriviaWeb.RoomPresence
-  alias LiveTriviaWeb.TypingQueue
   import LiveTriviaWeb.TriviaComponents
 
   @example_questions [
@@ -108,8 +107,11 @@ defmodule LiveTriviaWeb.AdminLive do
   @synthetic_keystroke_limit 18
   @synthetic_tick_ms 70
   @synthetic_submitted_clear_delay_ms 2_000
+
+  def demo_questions, do: @example_questions
+
   @impl true
-  def mount(%{"room_id" => room_id}, session, socket) do
+  def mount(%{"room_id" => room_id} = params, session, socket) do
     player_id = Map.fetch!(session, "player_id")
     room = Lobby.get_room(room_id)
 
@@ -124,11 +126,17 @@ defmodule LiveTriviaWeb.AdminLive do
         {:ok, push_navigate(socket, to: ~p"/rooms/#{room_id}")}
 
       true ->
+        benchmark_auto_run? = params["benchmark"] == "synthetic"
+
         if connected?(socket) do
           Game.subscribe(room_id)
           RoomPresence.subscribe(room_id)
           RoomPresence.track_admin(room_id, player_id)
           Lobby.touch_room(room_id)
+
+          if benchmark_auto_run? do
+            Process.send_after(self(), :prepare_synthetic_benchmark, 300)
+          end
         end
 
         socket =
@@ -140,10 +148,9 @@ defmodule LiveTriviaWeb.AdminLive do
           |> assign(:game_state, Game.get_state(room_id))
           |> assign(:players, RoomPresence.players(room_id))
           |> assign(:synthetic_players, [])
-          |> assign(:synthetic_test_running?, false)
-          |> assign(:typing_by_player, %{})
-          |> assign(:guess_results, %{})
-          |> assign(:json_text, Jason.encode!(@example_questions, pretty: true))
+          |> assign(:synthetic_test_running?, benchmark_auto_run?)
+          |> assign(:benchmark_auto_run?, benchmark_auto_run?)
+          |> assign(:json_text, Jason.encode!(demo_questions(), pretty: true))
           |> assign(:validation_error, nil)
 
         {:ok, socket}
@@ -173,24 +180,23 @@ defmodule LiveTriviaWeb.AdminLive do
 
   @impl true
   def handle_event("load_demo", _params, socket) do
-    Game.load_questions(socket.assigns.room_id, @example_questions)
+    Game.load_questions(socket.assigns.room_id, demo_questions())
     Lobby.touch_room(socket.assigns.room_id)
     {:noreply, assign(socket, :validation_error, nil)}
   end
 
   def handle_event("run_synthetic_render_test", _params, socket) do
-    synthetic_players = synthetic_players()
-    Process.send_after(self(), {:synthetic_render_tick, 0, 1}, @synthetic_tick_ms)
-    untrack_synthetic_players(socket.assigns.room_id, socket.assigns.synthetic_players)
-    track_synthetic_players(socket.assigns.room_id, synthetic_players)
+    {:noreply, start_synthetic_test(socket, benchmark?: false)}
+  end
 
-    {:noreply,
-     socket
-     |> clear_synthetic_state()
-     |> assign(:synthetic_players, synthetic_players)
-     |> assign(:players, RoomPresence.players(socket.assigns.room_id))
-     |> assign(:synthetic_test_running?, true)
-     |> broadcast_synthetic_keystroke(synthetic_players, 0, 0)}
+  def handle_event("synthetic_submit", %{"cycle" => cycle}, socket) do
+    cycle = parse_synthetic_cycle(cycle)
+    {:noreply, broadcast_synthetic_submit(socket, socket.assigns.synthetic_players, cycle)}
+  end
+
+  def handle_event("synthetic_test_finished", params, socket) do
+    emit_synthetic_client_summary(socket, params)
+    {:noreply, assign(socket, :synthetic_test_running?, false)}
   end
 
   def handle_event("load_json", %{"quiz" => %{"json" => json}}, socket) do
@@ -234,16 +240,25 @@ defmodule LiveTriviaWeb.AdminLive do
   end
 
   @impl true
-  def handle_info({:game_state, game_state}, socket) do
-    socket =
-      if new_round?(socket.assigns.game_state, game_state) do
-        socket
-        |> assign(:typing_by_player, %{})
-        |> assign(:guess_results, %{})
-      else
-        socket
-      end
+  def handle_info(:prepare_synthetic_benchmark, socket) do
+    if socket.assigns.benchmark_auto_run? do
+      Game.load_questions(socket.assigns.room_id, demo_questions())
+      Game.start_quiz(socket.assigns.room_id)
+      Process.send_after(self(), :run_synthetic_benchmark, 300)
+    end
 
+    {:noreply, socket}
+  end
+
+  def handle_info(:run_synthetic_benchmark, socket) do
+    if socket.assigns.benchmark_auto_run? do
+      {:noreply, start_synthetic_test(socket, benchmark?: true)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:game_state, game_state}, socket) do
     {:noreply, assign(socket, :game_state, game_state)}
   end
 
@@ -257,68 +272,10 @@ defmodule LiveTriviaWeb.AdminLive do
   def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff"}, socket),
     do: {:noreply, assign(socket, :players, RoomPresence.players(socket.assigns.room_id))}
 
-  def handle_info({:synthetic_render_tick, cycle, keystroke}, socket) do
-    synthetic_players = socket.assigns.synthetic_players
-    max_keystrokes = synthetic_cycle_keystrokes(synthetic_players, cycle)
-
-    {socket, next_message} =
-      if keystroke <= max_keystrokes do
-        {
-          broadcast_synthetic_keystroke(socket, synthetic_players, cycle, keystroke),
-          {:synthetic_render_tick, cycle, keystroke + 1}
-        }
-      else
-        socket = broadcast_synthetic_submit(socket, synthetic_players, cycle)
-        next_cycle = cycle + 1
-
-        {
-          socket,
-          if(next_cycle < @synthetic_test_cycles,
-            do: {:synthetic_render_tick, next_cycle, 1},
-            else: nil
-          )
-        }
-      end
-
-    if next_message do
-      Process.send_after(self(), next_message, @synthetic_tick_ms)
-    end
-
-    {:noreply,
-     assign(
-       socket,
-       :synthetic_test_running?,
-       not is_nil(next_message)
-     )}
-  end
-
   def handle_info({:synthetic_clear_submitted, player_id, bubble_id}, socket) do
-    broadcast_synthetic_typing(
-      socket.assigns.room_id,
-      player_id,
-      "",
-      nil,
-      :remove_submitted,
-      bubble_id
-    )
+    broadcast_synthetic_cleared(socket.assigns.room_id, player_id, bubble_id)
 
     {:noreply, socket}
-  end
-
-  def handle_info({:player_typing, player_id, text, guess_result}, socket) do
-    handle_info({:player_typing, player_id, text, guess_result, :typing}, socket)
-  end
-
-  def handle_info({:player_typing, player_id, text, guess_result, mode}, socket) do
-    handle_info({:player_typing, player_id, text, guess_result, mode, nil}, socket)
-  end
-
-  def handle_info({:player_typing, player_id, text, guess_result, mode, bubble_id}, socket) do
-    {:noreply, TypingQueue.queue(socket, {player_id, text, guess_result, mode, bubble_id})}
-  end
-
-  def handle_info(:flush_typing_updates, socket) do
-    {:noreply, TypingQueue.flush(socket)}
   end
 
   @impl true
@@ -344,8 +301,7 @@ defmodule LiveTriviaWeb.AdminLive do
           game_state={@game_state}
           players={@players}
           current_player_id={nil}
-          typing_by_player={@typing_by_player}
-          guess_results={@guess_results}
+          room_id={@room_id}
         />
       <% end %>
 
@@ -476,6 +432,61 @@ defmodule LiveTriviaWeb.AdminLive do
     hints ++ Enum.map((length(hints) + 1)..5//1, &"Hint #{&1}")
   end
 
+  defp start_synthetic_test(socket, opts) do
+    synthetic_players = synthetic_players()
+    untrack_synthetic_players(socket.assigns.room_id, socket.assigns.synthetic_players)
+    track_synthetic_players(socket.assigns.room_id, synthetic_players)
+
+    socket
+    |> assign(:synthetic_players, synthetic_players)
+    |> assign(:players, RoomPresence.players(socket.assigns.room_id))
+    |> assign(:synthetic_test_running?, true)
+    |> push_event("run_synthetic_typing_test", %{
+      players: synthetic_players,
+      guesses: synthetic_guesses(),
+      cycles: @synthetic_test_cycles,
+      tick_ms: @synthetic_tick_ms,
+      keystroke_limit: @synthetic_keystroke_limit,
+      benchmark: Keyword.get(opts, :benchmark?, false),
+      room_id: socket.assigns.room_id
+    })
+  end
+
+  defp emit_synthetic_client_summary(socket, params) when is_map(params) do
+    if Map.get(params, "benchmark") do
+      :telemetry.execute(
+        [:live_trivia, :synthetic_benchmark, :client_summary],
+        %{
+          samples: parse_number(params["samples"], 0),
+          avg_ms: parse_number(params["avg_ms"], 0.0),
+          p50_ms: parse_number(params["p50_ms"], 0.0),
+          p95_ms: parse_number(params["p95_ms"], 0.0),
+          p99_ms: parse_number(params["p99_ms"], 0.0),
+          max_ms: parse_number(params["max_ms"], 0.0),
+          receive_p95_ms: parse_number(params["receive_p95_ms"], 0.0),
+          receive_p99_ms: parse_number(params["receive_p99_ms"], 0.0),
+          dom_p95_ms: parse_number(params["dom_p95_ms"], 0.0),
+          dom_p99_ms: parse_number(params["dom_p99_ms"], 0.0),
+          duration_ms: parse_number(params["duration_ms"], 0.0)
+        },
+        %{room_id: socket.assigns.room_id}
+      )
+    end
+  end
+
+  defp emit_synthetic_client_summary(_socket, _params), do: :ok
+
+  defp parse_number(value, _default) when is_number(value), do: value
+
+  defp parse_number(value, default) when is_binary(value) do
+    case Float.parse(value) do
+      {number, _rest} -> number
+      :error -> default
+    end
+  end
+
+  defp parse_number(_value, default), do: default
+
   defp synthetic_players do
     colors = PlayerColors.all()
 
@@ -503,47 +514,22 @@ defmodule LiveTriviaWeb.AdminLive do
     end)
   end
 
-  defp broadcast_synthetic_keystroke(socket, synthetic_players, cycle, keystroke) do
-    Enum.each(synthetic_players, fn player ->
-      typing_text =
-        player
-        |> synthetic_guess_text(cycle)
-        |> synthetic_keystroke_prefix(player, cycle, keystroke)
-
-      broadcast_synthetic_typing(
-        socket.assigns.room_id,
-        player.player_id,
-        typing_text,
-        synthetic_result(player, cycle),
-        :typing,
-        nil
-      )
-    end)
-
-    socket
-  end
-
   defp broadcast_synthetic_submit(socket, synthetic_players, cycle) do
     Enum.each(synthetic_players, fn player ->
       bubble_id = "synthetic-#{System.unique_integer([:positive, :monotonic])}"
       guess_text = synthetic_guess_text(player, cycle)
 
-      result =
-        Game.submit_guess(
-          socket.assigns.room_id,
-          player.player_id,
-          player.name,
-          guess_text
-        )
+      Game.submit_guess(
+        socket.assigns.room_id,
+        player.player_id,
+        player.name,
+        guess_text
+      )
 
-      guess_result = (result && result.result) || synthetic_result(player, cycle)
-
-      broadcast_synthetic_typing(
+      broadcast_synthetic_submitted(
         socket.assigns.room_id,
         player.player_id,
         guess_text,
-        guess_result,
-        :submitted,
         bubble_id
       )
 
@@ -557,16 +543,24 @@ defmodule LiveTriviaWeb.AdminLive do
     socket
   end
 
-  defp broadcast_synthetic_typing(room_id, player_id, text, guess_result, mode, bubble_id) do
-    Phoenix.PubSub.broadcast(
-      LiveTrivia.PubSub,
+  defp broadcast_synthetic_submitted(room_id, player_id, text, bubble_id) do
+    LiveTriviaWeb.Endpoint.broadcast(
       RoomPresence.typing_topic(room_id),
-      {:player_typing, player_id, text, guess_result, mode, bubble_id}
+      "guess_submitted",
+      %{p: player_id, t: text, b: bubble_id}
     )
   end
 
-  defp synthetic_guess_text(player, cycle) do
-    guesses = [
+  defp broadcast_synthetic_cleared(room_id, player_id, bubble_id) do
+    LiveTriviaWeb.Endpoint.broadcast(
+      RoomPresence.typing_topic(room_id),
+      "guess_cleared",
+      %{p: player_id, b: bubble_id}
+    )
+  end
+
+  defp synthetic_guesses do
+    [
       "montanha azul",
       "paises baixos distante",
       "paralelepipedo muito comprido",
@@ -574,46 +568,23 @@ defmodule LiveTriviaWeb.AdminLive do
       "elemento secreto",
       "capital escondida longe"
     ]
+  end
 
+  defp synthetic_guess_text(player, cycle) do
+    guesses = synthetic_guesses()
     Enum.at(guesses, rem(cycle + synthetic_index(player), length(guesses)))
-  end
-
-  defp synthetic_keystroke_prefix(text, player, cycle, keystroke) do
-    visible_length =
-      min(
-        String.length(text),
-        max(1, keystroke - rem(synthetic_index(player) + cycle, 4))
-      )
-
-    String.slice(text, 0, visible_length)
-  end
-
-  defp synthetic_result(player, cycle) do
-    [:far, :near, :close, nil]
-    |> Enum.at(rem(cycle + synthetic_index(player), 4))
-  end
-
-  defp synthetic_cycle_keystrokes(synthetic_players, cycle) do
-    synthetic_players
-    |> Enum.map(fn player -> String.length(synthetic_guess_text(player, cycle)) end)
-    |> Enum.max(fn -> @synthetic_keystroke_limit end)
-    |> min(@synthetic_keystroke_limit)
   end
 
   defp synthetic_index(%{player_id: "synthetic-" <> index}), do: String.to_integer(index)
 
-  defp clear_synthetic_state(socket) do
-    socket
-    |> assign(:typing_by_player, reject_synthetic_keys(socket.assigns.typing_by_player))
-    |> assign(:guess_results, reject_synthetic_keys(socket.assigns.guess_results))
+  defp parse_synthetic_cycle(cycle) when is_integer(cycle), do: cycle
+
+  defp parse_synthetic_cycle(cycle) when is_binary(cycle) do
+    case Integer.parse(cycle) do
+      {cycle, _rest} -> cycle
+      :error -> 0
+    end
   end
 
-  defp reject_synthetic_keys(map) do
-    Map.reject(map, fn {player_id, _value} -> String.starts_with?(player_id, "synthetic-") end)
-  end
-
-  defp new_round?(old_state, new_state) do
-    old_state.current_index != new_state.current_index ||
-      (old_state.phase != new_state.phase && new_state.phase == :in_progress)
-  end
+  defp parse_synthetic_cycle(_cycle), do: 0
 end

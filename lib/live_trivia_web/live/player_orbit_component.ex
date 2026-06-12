@@ -2,7 +2,6 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
   use LiveTriviaWeb, :live_component
 
   alias LiveTriviaWeb.ResultColors
-  alias LiveTriviaWeb.TypingBubble
 
   @impl true
   def render(assigns) do
@@ -40,28 +39,16 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
           {@score} pts
         </div>
       </div>
-      <div class="absolute -bottom-8 left-1/2 h-44 w-32 -translate-x-1/2 whitespace-nowrap">
-        <TypingBubble.guess_burst
-          :for={
-            {bubble, index} <-
-              Enum.with_index(TypingBubble.submitted_bubbles(@typing))
-          }
-          id={"desktop-submitted-bubble-#{@player.player_id}-#{bubble.id}"}
-          player={@player}
-          text={TypingBubble.text(bubble)}
-          class={[
-            "inset-x-0 top-0 w-32",
-            submitted_bubble_z_index(index)
-          ]}
-        />
-        <div :if={TypingBubble.active_text(@typing) != ""} class="absolute left-0 top-0 z-[60]">
-          <TypingBubble.typing_bubble
-            id={"desktop-live-bubble-#{@player.player_id}"}
-            player={@player}
-            text={TypingBubble.active_text(@typing)}
-            class="w-32 max-w-32 rounded-full px-2 py-1 text-xs"
-          />
-        </div>
+      <div
+        id={"desktop-typing-slot-#{@player.player_id}"}
+        data-role="typing-slot"
+        data-variant="desktop"
+        data-player-id={@player.player_id}
+        data-player-name={@player.name}
+        data-player-color={@player.color}
+        phx-update="ignore"
+        class="absolute -bottom-8 left-1/2 h-44 w-32 -translate-x-1/2 whitespace-nowrap"
+      >
       </div>
     </div>
     """
@@ -90,9 +77,4 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
   defp result_shadow(:near), do: "shadow-[0_0_28px_rgba(249,115,22,0.8)]"
   defp result_shadow(:far), do: "shadow-[0_0_28px_rgba(239,68,68,0.8)]"
   defp result_shadow(_result), do: nil
-
-  defp submitted_bubble_z_index(index) do
-    ["z-10", "z-20", "z-30", "z-40", "z-50"]
-    |> Enum.at(index, "z-10")
-  end
 end

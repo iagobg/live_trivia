@@ -2,18 +2,22 @@ defmodule LiveTriviaWeb.TriviaComponents do
   use LiveTriviaWeb, :html
 
   alias LiveTriviaWeb.ResultColors
-  alias LiveTriviaWeb.TypingBubble
 
   attr :game_state, :map, required: true
   attr :players, :list, required: true
+  attr :room_id, :string, required: true
   attr :current_player_id, :any, default: nil
-  attr :typing_by_player, :map, default: %{}
-  attr :guess_results, :map, default: %{}
   slot :inner_block
 
   def game_stage(assigns) do
     ~H"""
-    <div class="keyboard-aware-player-screen relative min-h-[var(--app-viewport-height,100svh)] overflow-hidden bg-gray-950 text-white sm:min-h-screen">
+    <div
+      id={"game-stage-#{@room_id}"}
+      phx-hook="TypingChannel"
+      data-room-id={@room_id}
+      data-current-player-id={@current_player_id}
+      class="keyboard-aware-player-screen relative min-h-[var(--app-viewport-height,100svh)] overflow-hidden bg-gray-950 text-white sm:min-h-screen"
+    >
       <div class="absolute inset-0 opacity-30">
         <div
           :for={i <- 1..60}
@@ -27,17 +31,14 @@ defmodule LiveTriviaWeb.TriviaComponents do
           players={@players}
           game_state={@game_state}
           current_player_id={@current_player_id}
-          typing_by_player={@typing_by_player}
-          guess_results={@guess_results}
         />
         <.central_hub game_state={@game_state} players={@players} />
         <.mobile_player_roster
           players={@players}
           game_state={@game_state}
           current_player_id={@current_player_id}
-          guess_results={@guess_results}
         />
-        <.mobile_typing_bubbles players={@players} typing_by_player={@typing_by_player} />
+        <.mobile_typing_bubbles players={@players} />
       </div>
 
       {render_slot(@inner_block)}
@@ -48,7 +49,6 @@ defmodule LiveTriviaWeb.TriviaComponents do
   attr :players, :list, required: true
   attr :game_state, :map, required: true
   attr :current_player_id, :any, default: nil
-  attr :guess_results, :map, default: %{}
 
   def mobile_player_roster(assigns) do
     ~H"""
@@ -59,11 +59,8 @@ defmodule LiveTriviaWeb.TriviaComponents do
           class="flex min-w-0 flex-col items-center gap-0.5"
         >
           <div
-            class={[
-              "flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-black text-white shadow-lg",
-              Map.get(@guess_results, player.player_id) == :correct && "scale-110"
-            ]}
-            style={mobile_player_avatar_style(player, Map.get(@guess_results, player.player_id))}
+            class="flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-black text-white shadow-lg"
+            style={mobile_player_avatar_style(player, nil)}
           >
             {String.first(player.name) |> String.upcase()}
           </div>
@@ -81,50 +78,22 @@ defmodule LiveTriviaWeb.TriviaComponents do
   end
 
   attr :players, :list, required: true
-  attr :typing_by_player, :map, default: %{}
 
   def mobile_typing_bubbles(assigns) do
-    assigns =
-      assign(
-        assigns,
-        :typing_players,
-        Enum.filter(
-          assigns.players,
-          &(TypingBubble.visible_count(Map.get(assigns.typing_by_player, &1.player_id)) > 0)
-        )
-      )
-
     ~H"""
     <div class="pointer-events-none absolute inset-0 z-20 sm:hidden" aria-hidden="true">
       <div
-        :for={index <- 0..15}
+        :for={{player, index} <- Enum.with_index(Enum.take(@players, 16))}
+        id={"mobile-typing-slot-#{player.player_id}"}
+        data-role="typing-slot"
+        data-variant="mobile"
+        data-player-id={player.player_id}
+        data-player-name={player.name}
+        data-player-color={player.color}
+        phx-update="ignore"
         class="absolute h-44 w-24"
         style={mobile_bubble_slot_style(index)}
       >
-        <div :if={player = Enum.at(@typing_players, index)} class="relative h-full w-full">
-          <TypingBubble.guess_burst
-            :for={
-              {bubble, bubble_index} <-
-                Enum.with_index(
-                  TypingBubble.submitted_bubbles(Map.get(@typing_by_player, player.player_id))
-                )
-            }
-            id={"mobile-submitted-bubble-#{player.player_id}-#{bubble.id}"}
-            player={player}
-            text={TypingBubble.text(bubble)}
-            class={[
-              "inset-x-0 top-0 w-full text-[0.68rem]",
-              mobile_submitted_bubble_z_index(bubble_index)
-            ]}
-          />
-          <TypingBubble.typing_bubble
-            :if={TypingBubble.active_text(Map.get(@typing_by_player, player.player_id)) != ""}
-            id={"mobile-live-bubble-#{player.player_id}"}
-            player={player}
-            text={TypingBubble.active_text(Map.get(@typing_by_player, player.player_id))}
-            class="absolute left-0 top-0 z-[60] w-full max-w-full rounded-full px-2.5 py-1.5 text-center text-[0.68rem] font-bold"
-          />
-        </div>
       </div>
     </div>
     """
@@ -133,8 +102,6 @@ defmodule LiveTriviaWeb.TriviaComponents do
   attr :players, :list, required: true
   attr :game_state, :map, required: true
   attr :current_player_id, :any, default: nil
-  attr :typing_by_player, :map, default: %{}
-  attr :guess_results, :map, default: %{}
 
   def player_orbit(assigns) do
     assigns = assign(assigns, :count, max(length(assigns.players), 1))
@@ -150,8 +117,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
         count={@count}
         current_player_id={@current_player_id}
         score={Map.get(@game_state.player_scores, player.player_id, 0)}
-        guess_result={Map.get(@guess_results, player.player_id)}
-        typing={Map.get(@typing_by_player, player.player_id)}
+        guess_result={nil}
         leading={
           (@game_state.closest_guess && @game_state.closest_guess.player_id == player.player_id) ||
             false
@@ -503,11 +469,6 @@ defmodule LiveTriviaWeb.TriviaComponents do
       )
 
     "left: #{left}%; top: #{top}%;"
-  end
-
-  defp mobile_submitted_bubble_z_index(index) do
-    ["z-10", "z-20", "z-30", "z-40", "z-50"]
-    |> Enum.at(index, "z-10")
   end
 
   defp mobile_player_avatar_style(player, guess_result) do

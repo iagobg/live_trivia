@@ -35,3 +35,6 @@ live_trivia-*.tar
 npm-debug.log
 /assets/node_modules/
 
+
+# Local benchmark run logs.
+/benchmark_logs/

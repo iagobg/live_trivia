@@ -10,7 +10,7 @@ The app is designed around fast server-authoritative state updates with minimal 
 - Join as a player with a name and color.
 - Host/admin screen for loading JSON questions, starting rounds, advancing rounds, resetting, and closing rooms.
 - Server-side round timers, scheduled hints, scoring, closest-guess fallback, and final podium.
-- Real-time player presence and typing bubbles through Phoenix PubSub and Presence.
+- Real-time player presence through Phoenix Presence and high-frequency typing bubbles through Phoenix Channels.
 - Bounded in-memory room model suitable for live event/session style trivia games.
 - Optional synthetic 16-player render test from the admin screen.
 
@@ -25,9 +25,9 @@ Important application files:
 - `lib/live_trivia_web/live/admin_live.ex` renders the host/admin experience.
 - `lib/live_trivia_web/live/player_live.ex` renders the player join and gameplay experience.
 - `lib/live_trivia_web/room_presence.ex` centralizes room topics, player/admin/color presence, and player listing helpers.
-- `lib/live_trivia_web/typing_queue.ex` batches high-frequency typing updates before assigning them in LiveViews.
+- `lib/live_trivia_web/channels/typing_channel.ex` relays high-frequency typing events over Phoenix Channels without forcing LiveView re-renders.
 - `lib/live_trivia_web/live/trivia_components.ex` contains shared UI components for the game stage, player orbit, mobile roster, hints, and podium.
-- `assets/js/app.js` contains LiveView setup and the small client-side hooks used for focus, viewport, timer, hint, and animation behavior.
+- `assets/js/app.js` contains LiveView setup, the typing channel client, and hooks used for focus, viewport, timer, hint, and animation behavior.
 - `assets/css/app.css` contains Tailwind CSS imports and custom styling.
 - `priv/static/robots.txt` and `lib/live_trivia_web/components/layouts/root.html.heex` contain basic SEO/static document metadata.
 
@@ -76,6 +76,46 @@ mix precommit
 ```
 
 `mix precommit` is the project check used before finishing changes. It compiles with warnings as errors, checks for unused dependencies, formats, and runs the test suite.
+
+## Synthetic Benchmarking
+
+Run the benchmark launch routine:
+
+```sh
+scripts/benchmark_synthetic.sh
+```
+
+Use `BENCHMARK_LABEL` to tag comparable runs:
+
+```sh
+BENCHMARK_LABEL=json_channels scripts/benchmark_synthetic.sh
+```
+
+The launcher writes each run to `benchmark_logs/<timestamp>_<label>.log`. It waits for the server to become ready, waits `BENCHMARK_WARMUP_SECONDS` seconds, and then opens the benchmark route. The default warmup is 3 seconds; use the same value for comparable runs:
+
+```sh
+BENCHMARK_LABEL=json_channels BENCHMARK_WARMUP_SECONDS=5 scripts/benchmark_synthetic.sh
+```
+
+This starts Phoenix with `LIVE_TRIVIA_BENCHMARK=1`, opens `/benchmark/synthetic`, creates a benchmark room, loads the demo quiz, starts the round, and auto-runs the 16-player synthetic websocket test.
+
+Benchmark output is split between:
+
+- Browser console: client render latency summary for synthetic typing updates (`avg`, `p50`, `p95`, `p99`, `max`).
+- Server logs: 5-second benchmark snapshots with typing message count/rate, payload bytes, average/p95/max channel handling time, BEAM reductions, BEAM memory, Linux RSS, Linux process CPU, process count, and run queue.
+- Server logs: one end-of-run `benchmark attempt summary` combining client latency with aggregate typing count/rate, payload bytes, handler timing, reductions, average/max CPU, max RSS/BEAM memory, max run queue, and snapshot count.
+
+You can also start the app manually with telemetry enabled:
+
+```sh
+LIVE_TRIVIA_BENCHMARK=1 LIVE_TRIVIA_BENCHMARK_LABEL=json_channels mix phx.server
+```
+
+Then open:
+
+```text
+http://localhost:3070/benchmark/synthetic
+```
 
 ## Quiz JSON Format
 
@@ -163,4 +203,4 @@ docker run --rm \
 
 Rooms and games are intentionally in memory. This keeps the live event flow simple and fast, but it also means rooms do not survive application restarts. The current limits are conservative: up to 16 rooms and 16 players per room.
 
-For the intended use case, Phoenix LiveView and Elixir handle the real-time coordination well: each game room has a dedicated `LiveTrivia.Game` process, room membership uses Presence, and state changes fan out over PubSub. The browser-side JavaScript remains focused on presentation details rather than game authority.
+For the intended use case, Phoenix LiveView and Elixir handle the real-time coordination well: each game room has a dedicated `LiveTrivia.Game` process, room membership uses Presence, and authoritative state changes fan out over PubSub. High-frequency typing bubbles use Phoenix Channels and client-side rendering so they do not force LiveView diffs, while the browser-side JavaScript remains focused on presentation details rather than game authority.
