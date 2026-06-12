@@ -25,9 +25,9 @@ Important application files:
 - `lib/live_trivia_web/live/admin_live.ex` renders the host/admin experience.
 - `lib/live_trivia_web/live/player_live.ex` renders the player join and gameplay experience.
 - `lib/live_trivia_web/room_presence.ex` centralizes room topics, player/admin/color presence, and player listing helpers.
-- `lib/live_trivia_web/typing_queue.ex` batches high-frequency typing updates before assigning them in LiveViews.
+- `lib/live_trivia_web/channels/typing_channel.ex` relays high-frequency typing events over Phoenix Channels without forcing LiveView re-renders.
 - `lib/live_trivia_web/live/trivia_components.ex` contains shared UI components for the game stage, player orbit, mobile roster, hints, and podium.
-- `assets/js/app.js` contains LiveView setup and the small client-side hooks used for focus, viewport, timer, hint, and animation behavior.
+- `assets/js/app.js` contains LiveView setup, the typing channel client, and hooks used for focus, viewport, timer, hint, and animation behavior.
 - `assets/css/app.css` contains Tailwind CSS imports and custom styling.
 - `priv/static/robots.txt` and `lib/live_trivia_web/components/layouts/root.html.heex` contain basic SEO/static document metadata.
 
@@ -163,4 +163,4 @@ docker run --rm \
 
 Rooms and games are intentionally in memory. This keeps the live event flow simple and fast, but it also means rooms do not survive application restarts. The current limits are conservative: up to 16 rooms and 16 players per room.
 
-For the intended use case, Phoenix LiveView and Elixir handle the real-time coordination well: each game room has a dedicated `LiveTrivia.Game` process, room membership uses Presence, and state changes fan out over PubSub. The browser-side JavaScript remains focused on presentation details rather than game authority.
+For the intended use case, Phoenix LiveView and Elixir handle the real-time coordination well: each game room has a dedicated `LiveTrivia.Game` process, room membership uses Presence, and authoritative state changes fan out over PubSub. High-frequency typing bubbles use Phoenix Channels and client-side rendering so they do not force LiveView diffs, while the browser-side JavaScript remains focused on presentation details rather than game authority.

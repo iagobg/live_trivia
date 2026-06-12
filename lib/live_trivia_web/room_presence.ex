@@ -56,7 +56,6 @@ defmodule LiveTriviaWeb.RoomPresence do
   def subscribe(room_id) do
     Phoenix.PubSub.subscribe(LiveTrivia.PubSub, players_topic(room_id))
     Phoenix.PubSub.subscribe(LiveTrivia.PubSub, room_topic(room_id))
-    Phoenix.PubSub.subscribe(LiveTrivia.PubSub, typing_topic(room_id))
   end
 
   def players_topic(room_id), do: "players:#{room_id}"

@@ -26,6 +26,53 @@ import {hooks as colocatedHooks} from "phoenix-colocated/live_trivia"
 import topbar from "../vendor/topbar"
 
 const Hooks = {}
+const channelSocket = new Socket("/socket", {})
+let channelSocketConnected = false
+
+const ensureChannelSocket = () => {
+  if (!channelSocketConnected) {
+    channelSocket.connect()
+    channelSocketConnected = true
+  }
+
+  return channelSocket
+}
+
+const typingBubbleStyle = player =>
+  `border-color: ${player.color}aa; background-color: ${player.color}dd; box-shadow: 0 0 18px ${player.color}66;`
+
+const normalizeTypingPayload = payload => ({
+  player_id: payload.p || payload.player_id || payload.playerId || "",
+  text: payload.t || payload.text || "",
+})
+
+const normalizeSubmittedPayload = payload => ({
+  player_id: payload.p || payload.player_id || payload.playerId || "",
+  text: payload.t || payload.text || "",
+  bubble_id: payload.b || payload.bubble_id || payload.bubbleId || null,
+})
+
+const normalizeClearedPayload = payload => ({
+  player_id: payload.p || payload.player_id || payload.playerId || "",
+  bubble_id: payload.b || payload.bubble_id || payload.bubbleId || null,
+})
+
+const measureTypingBubble = bubble => {
+  const content = bubble.querySelector(".typing-bubble-content")
+  if (!content) return
+
+  bubble.classList.remove("is-overflowing")
+
+  requestAnimationFrame(() => {
+    const styles = window.getComputedStyle(bubble)
+    const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight)
+    const availableWidth = bubble.clientWidth - horizontalPadding
+    const overflow = content.scrollWidth - availableWidth
+
+    if (overflow > 4) bubble.classList.add("is-overflowing")
+  })
+}
+
 
 const mobileViewportQuery = window.matchMedia("(max-width: 639px)")
 const keyboardAwareSelector = ".keyboard-aware-player-screen, .keyboard-aware-join-screen"
@@ -58,6 +105,342 @@ document.addEventListener("focusin", event => {
 
   setTimeout(updateVisualViewportVars, 50)
 })
+
+
+Hooks.TypingChannel = {
+  mounted() {
+    this.players = new Map()
+    this.channel = null
+    this.handleInput = this.handleInput.bind(this)
+    this.handleTyping = this.handleTyping.bind(this)
+    this.handleGuessSubmitted = this.handleGuessSubmitted.bind(this)
+    this.handleGuessCleared = this.handleGuessCleared.bind(this)
+    this.syntheticTimer = null
+    this.syntheticConnections = []
+    this.syntheticRunId = 0
+
+    this.cachePlayers()
+    this.connectChannel()
+    this.handleEvent("run_synthetic_typing_test", config => this.runSyntheticTypingTest(config))
+    this.el.addEventListener("input", this.handleInput)
+  },
+
+  updated() {
+    this.cachePlayers()
+  },
+
+  destroyed() {
+    this.el.removeEventListener("input", this.handleInput)
+
+    if (this.syntheticTimer) clearTimeout(this.syntheticTimer)
+    this.disconnectSyntheticPlayers()
+
+    if (this.channel) {
+      this.channel.leave()
+      this.channel = null
+    }
+  },
+
+  connectChannel() {
+    const roomId = this.el.dataset.roomId
+    if (!roomId) return
+
+    this.channel = ensureChannelSocket().channel(`typing:${roomId}`, {})
+    this.channel.on("typing", this.handleTyping)
+    this.channel.on("guess_submitted", this.handleGuessSubmitted)
+    this.channel.on("guess_cleared", this.handleGuessCleared)
+    this.channel.join()
+  },
+
+  cachePlayers() {
+    const players = new Map()
+
+    this.el.querySelectorAll("[data-role='typing-slot'][data-player-id]").forEach(slot => {
+      const playerId = slot.dataset.playerId
+      const player = players.get(playerId) || {
+        player_id: playerId,
+        name: slot.dataset.playerName || "",
+        color: slot.dataset.playerColor || "#888888",
+        slots: [],
+      }
+
+      player.slots.push(slot)
+      players.set(playerId, player)
+    })
+
+    this.players = players
+  },
+
+  handleInput(event) {
+    const input = event.target.closest?.("input[name='guess[text]']")
+    const playerId = this.el.dataset.currentPlayerId
+
+    if (!input || !playerId || !this.channel) return
+
+    const payload = {p: playerId, t: input.value.slice(0, 80)}
+
+    this.handleTyping(payload)
+    this.channel.push("typing", payload)
+  },
+
+  handleTyping(payload) {
+    const update = normalizeTypingPayload(payload)
+    const player = this.players.get(update.player_id)
+
+    if (!player) return
+
+    player.slots.forEach(slot => this.setLiveBubble(slot, player, update.text))
+  },
+
+  handleGuessSubmitted(payload) {
+    const update = normalizeSubmittedPayload(payload)
+    const player = this.players.get(update.player_id)
+
+    if (!player) return
+
+    player.slots.forEach(slot => {
+      this.removeLiveBubble(slot)
+      this.addSubmittedBubble(slot, player, update)
+    })
+  },
+
+  handleGuessCleared(payload) {
+    const update = normalizeClearedPayload(payload)
+    const player = this.players.get(update.player_id)
+
+    if (!player) return
+
+    player.slots.forEach(slot => this.removeSubmittedBubble(slot, update.bubble_id))
+  },
+
+  setLiveBubble(slot, player, text) {
+    let bubble = slot.querySelector("[data-role='live-typing-bubble']")
+
+    if (!text) {
+      if (bubble) bubble.remove()
+      return
+    }
+
+    if (!bubble) {
+      bubble = document.createElement("div")
+      bubble.dataset.role = "live-typing-bubble"
+      bubble.className = this.liveBubbleClass(slot)
+      bubble.style.cssText = typingBubbleStyle(player)
+
+      const content = document.createElement("span")
+      content.className = "typing-bubble-content"
+      bubble.appendChild(content)
+      slot.appendChild(bubble)
+    }
+
+    bubble.querySelector(".typing-bubble-content").textContent = text
+    measureTypingBubble(bubble)
+  },
+
+  removeLiveBubble(slot) {
+    slot.querySelector("[data-role='live-typing-bubble']")?.remove()
+  },
+
+  addSubmittedBubble(slot, player, update) {
+    const bubble = document.createElement("div")
+    const bubbleId = update.bubble_id || `${Date.now()}-${Math.random()}`
+
+    bubble.dataset.role = "submitted-typing-bubble"
+    bubble.dataset.bubbleId = bubbleId
+    bubble.className = this.submittedBubbleClass(slot)
+    bubble.style.cssText = typingBubbleStyle(player)
+
+    const content = document.createElement("span")
+    content.className = "guess-burst-content"
+    content.textContent = update.text
+    bubble.appendChild(content)
+    slot.appendChild(bubble)
+
+    // Force animation restart even when the same player submits repeatedly in quick succession.
+    bubble.style.animation = "none"
+    void bubble.offsetWidth
+    bubble.style.removeProperty("animation")
+
+    setTimeout(() => bubble.remove(), 1200)
+  },
+
+  async runSyntheticTypingTest(config) {
+    if (!this.channel) return
+    if (this.syntheticTimer) clearTimeout(this.syntheticTimer)
+    this.disconnectSyntheticPlayers()
+
+    const roomId = this.el.dataset.roomId
+    const players = config.players || []
+    const cycles = Number(config.cycles || 1)
+    const tickMs = Number(config.tick_ms || 70)
+    const keystrokeLimit = Number(config.keystroke_limit || 18)
+    const guesses = config.guesses || []
+    const runId = this.syntheticRunId + 1
+
+    this.syntheticRunId = runId
+    this.cachePlayers()
+
+    let connections = []
+
+    try {
+      connections = await Promise.all(
+        players.map(player => this.connectSyntheticPlayer(roomId, player))
+      )
+    } catch (_error) {
+      this.disconnectSyntheticPlayers(connections)
+
+      if (this.syntheticRunId === runId) {
+        this.pushEvent("synthetic_test_finished", {})
+      }
+
+      return
+    }
+
+    if (this.syntheticRunId !== runId) {
+      this.disconnectSyntheticPlayers(connections)
+      return
+    }
+
+    this.syntheticConnections = connections
+
+    this.runSyntheticCycle({
+      players,
+      cycles,
+      tickMs,
+      keystrokeLimit,
+      guesses,
+      cycle: 0,
+      keystroke: 0,
+      runId,
+    })
+  },
+
+  connectSyntheticPlayer(roomId, player) {
+    return new Promise((resolve, reject) => {
+      const socket = new Socket("/socket", {params: {synthetic_player_id: player.player_id}})
+      const channel = socket.channel(`typing:${roomId}`, {})
+
+      socket.connect()
+
+      channel
+        .join()
+        .receive("ok", () => resolve({player, socket, channel}))
+        .receive("error", reject)
+        .receive("timeout", () => reject(new Error("synthetic channel join timed out")))
+    })
+  },
+
+  disconnectSyntheticPlayers(connections = this.syntheticConnections) {
+    connections.forEach(({channel, socket}) => {
+      channel.leave()
+      socket.disconnect()
+    })
+
+    if (connections === this.syntheticConnections) {
+      this.syntheticConnections = []
+    }
+  },
+
+  runSyntheticCycle(state) {
+    if (this.syntheticRunId !== state.runId) return
+
+    const maxKeystrokes = this.syntheticCycleKeystrokes(state)
+
+    if (state.keystroke <= maxKeystrokes) {
+      state.players.forEach(player => {
+        const text = this.syntheticKeystrokeText(player, state.cycle, state.keystroke, state.guesses)
+        this.pushSyntheticTyping(player, text)
+      })
+
+      this.syntheticTimer = setTimeout(
+        () => this.runSyntheticCycle({...state, keystroke: state.keystroke + 1}),
+        state.tickMs
+      )
+
+      return
+    }
+
+    this.pushEvent("synthetic_submit", {cycle: state.cycle})
+
+    const nextCycle = state.cycle + 1
+
+    if (nextCycle >= state.cycles) {
+      this.syntheticTimer = setTimeout(() => {
+        this.disconnectSyntheticPlayers()
+        this.pushEvent("synthetic_test_finished", {})
+      }, 300)
+      return
+    }
+
+    this.syntheticTimer = setTimeout(
+      () => this.runSyntheticCycle({...state, cycle: nextCycle, keystroke: 1}),
+      Math.max(300, state.tickMs)
+    )
+  },
+
+  pushSyntheticTyping(player, text) {
+    const connection = this.syntheticConnections.find(
+      ({player: syntheticPlayer}) => syntheticPlayer.player_id === player.player_id
+    )
+
+    if (!connection) return
+
+    connection.channel.push("typing", {p: player.player_id, t: text})
+  },
+
+  syntheticCycleKeystrokes({players, cycle, guesses, keystrokeLimit}) {
+    const maxLength = players.reduce((max, player) => {
+      return Math.max(max, this.syntheticGuessText(player, cycle, guesses).length)
+    }, keystrokeLimit)
+
+    return Math.min(maxLength, keystrokeLimit)
+  },
+
+  syntheticKeystrokeText(player, cycle, keystroke, guesses) {
+    const text = this.syntheticGuessText(player, cycle, guesses)
+    const visibleLength = Math.min(
+      text.length,
+      Math.max(1, keystroke - ((this.syntheticIndex(player) + cycle) % 4))
+    )
+
+    return text.slice(0, visibleLength)
+  },
+
+  syntheticGuessText(player, cycle, guesses) {
+    if (guesses.length === 0) return ""
+    return guesses[(cycle + this.syntheticIndex(player)) % guesses.length]
+  },
+
+
+  syntheticIndex(player) {
+    const match = String(player.player_id || "").match(/synthetic-(\d+)/)
+    return match ? Number(match[1]) : 0
+  },
+
+  removeSubmittedBubble(slot, bubbleId) {
+    if (!bubbleId) return
+
+    slot
+      .querySelectorAll(`[data-role='submitted-typing-bubble'][data-bubble-id='${CSS.escape(bubbleId)}']`)
+      .forEach(bubble => bubble.remove())
+  },
+
+  liveBubbleClass(slot) {
+    if (slot.dataset.variant === "mobile") {
+      return "typing-bubble is-live absolute left-0 top-0 z-[60] w-full max-w-full translate-y-0 overflow-hidden rounded-full border px-2.5 py-1.5 text-center text-[0.68rem] font-bold text-white opacity-100 shadow-lg"
+    }
+
+    return "typing-bubble is-live absolute left-0 top-0 z-[60] w-32 max-w-32 translate-y-0 overflow-hidden rounded-full border px-2 py-1 text-xs font-semibold text-white opacity-100 shadow-lg"
+  },
+
+  submittedBubbleClass(slot) {
+    if (slot.dataset.variant === "mobile") {
+      return "guess-burst pointer-events-none absolute inset-x-0 top-0 z-[80] w-full overflow-hidden rounded-full border px-2 py-1 text-center text-[0.68rem] font-semibold text-white opacity-0 shadow-lg"
+    }
+
+    return "guess-burst pointer-events-none absolute inset-x-0 top-0 z-[80] w-32 overflow-hidden rounded-full border px-2 py-1 text-center text-xs font-semibold text-white opacity-0 shadow-lg"
+  },
+}
 
 Hooks.RoomPasswordToggle = {
   mounted() {
@@ -266,43 +649,6 @@ Hooks.HintTicker = {
       this.content.style.setProperty("--hint-overflow", `${overflow}px`)
       this.content.style.setProperty("--hint-duration", "4s")
       this.el.classList.add("is-scrolling")
-    })
-  },
-}
-
-Hooks.TypingBubble = {
-  mounted() {
-    this.content = this.el.querySelector(".typing-bubble-content")
-    this.lastMeasureKey = null
-    this.updateBubble()
-  },
-
-  updated() {
-    this.content = this.el.querySelector(".typing-bubble-content")
-    this.updateBubble()
-  },
-
-  updateBubble() {
-    if (!this.content) return
-
-    const text = this.content.textContent || ""
-    const width = this.el.clientWidth
-    const measureKey = `${text}:${width}`
-
-    if (measureKey === this.lastMeasureKey) return
-
-    this.lastMeasureKey = measureKey
-    this.el.classList.remove("is-overflowing")
-
-    requestAnimationFrame(() => {
-      const styles = window.getComputedStyle(this.el)
-      const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight)
-      const availableWidth = this.el.clientWidth - horizontalPadding
-      const overflow = this.content.scrollWidth - availableWidth
-
-      if (overflow <= 4) return
-
-      this.el.classList.add("is-overflowing")
     })
   },
 }
