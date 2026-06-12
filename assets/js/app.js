@@ -44,6 +44,7 @@ const typingBubbleStyle = player =>
 const normalizeTypingPayload = payload => ({
   player_id: payload.p || payload.player_id || payload.playerId || "",
   text: payload.t || payload.text || "",
+  timestamp: payload.ts || null,
 })
 
 const normalizeSubmittedPayload = payload => ({
@@ -56,6 +57,20 @@ const normalizeClearedPayload = payload => ({
   player_id: payload.p || payload.player_id || payload.playerId || "",
   bubble_id: payload.b || payload.bubble_id || payload.bubbleId || null,
 })
+
+
+const percentile = (sortedValues, percentileValue) => {
+  if (sortedValues.length === 0) return 0
+
+  const index = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.ceil(sortedValues.length * percentileValue) - 1)
+  )
+
+  return sortedValues[index]
+}
+
+const roundMetric = value => Math.round(value * 100) / 100
 
 const measureTypingBubble = bubble => {
   const content = bubble.querySelector(".typing-bubble-content")
@@ -119,6 +134,7 @@ Hooks.TypingChannel = {
     this.syntheticSlotTimer = null
     this.syntheticConnections = []
     this.syntheticRunId = 0
+    this.benchmarkRun = null
 
     this.cachePlayers()
     this.connectChannel()
@@ -191,7 +207,9 @@ Hooks.TypingChannel = {
 
     if (!player) return
 
+    const receivedAt = performance.now()
     player.slots.forEach(slot => this.setLiveBubble(slot, player, update.text))
+    this.recordBenchmarkLatency(update, receivedAt)
   },
 
   handleGuessSubmitted(payload) {
@@ -278,9 +296,12 @@ Hooks.TypingChannel = {
     const tickMs = Number(config.tick_ms || 70)
     const keystrokeLimit = Number(config.keystroke_limit || 18)
     const guesses = config.guesses || []
+    const benchmark = config.benchmark === true
+    const roomIdForBenchmark = config.room_id || roomId
     const runId = this.syntheticRunId + 1
 
     this.syntheticRunId = runId
+    this.benchmarkRun = benchmark ? this.newBenchmarkRun(roomIdForBenchmark) : null
     this.cachePlayers()
 
     let connections = []
@@ -407,7 +428,7 @@ Hooks.TypingChannel = {
     if (nextCycle >= state.cycles) {
       this.syntheticTimer = setTimeout(() => {
         this.disconnectSyntheticPlayers()
-        this.pushEvent("synthetic_test_finished", {})
+        this.pushEvent("synthetic_test_finished", this.finishBenchmarkRun())
       }, 300)
       return
     }
@@ -425,7 +446,54 @@ Hooks.TypingChannel = {
 
     if (!connection) return
 
-    connection.channel.push("typing", {p: player.player_id, t: text})
+    const payload = {p: player.player_id, t: text}
+
+    if (this.benchmarkRun) payload.ts = performance.now()
+
+    connection.channel.push("typing", payload)
+  },
+
+  newBenchmarkRun(roomId) {
+    return {roomId, startedAt: performance.now(), latencies: [], receiveLatencies: [], domLatencies: []}
+  },
+
+  recordBenchmarkLatency(update, receivedAt) {
+    if (!this.benchmarkRun || typeof update.timestamp !== "number") return
+
+    const renderedAt = performance.now()
+    this.benchmarkRun.latencies.push(renderedAt - update.timestamp)
+    this.benchmarkRun.receiveLatencies.push(receivedAt - update.timestamp)
+    this.benchmarkRun.domLatencies.push(renderedAt - receivedAt)
+  },
+
+  finishBenchmarkRun() {
+    if (!this.benchmarkRun) return {}
+
+    const run = this.benchmarkRun
+    const sorted = [...run.latencies].sort((a, b) => a - b)
+    const sortedReceive = [...run.receiveLatencies].sort((a, b) => a - b)
+    const sortedDom = [...run.domLatencies].sort((a, b) => a - b)
+    const samples = sorted.length
+    const summary = {
+      benchmark: true,
+      room_id: run.roomId,
+      samples,
+      avg_ms: roundMetric(samples ? sorted.reduce((sum, value) => sum + value, 0) / samples : 0),
+      p50_ms: roundMetric(percentile(sorted, 0.5)),
+      p95_ms: roundMetric(percentile(sorted, 0.95)),
+      p99_ms: roundMetric(percentile(sorted, 0.99)),
+      max_ms: roundMetric(samples ? sorted[samples - 1] : 0),
+      receive_p95_ms: roundMetric(percentile(sortedReceive, 0.95)),
+      receive_p99_ms: roundMetric(percentile(sortedReceive, 0.99)),
+      dom_p95_ms: roundMetric(percentile(sortedDom, 0.95)),
+      dom_p99_ms: roundMetric(percentile(sortedDom, 0.99)),
+      duration_ms: roundMetric(performance.now() - run.startedAt),
+    }
+
+    console.table([summary])
+    this.benchmarkRun = null
+
+    return summary
   },
 
   syntheticCycleKeystrokes({players, cycle, guesses, keystrokeLimit}) {

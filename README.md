@@ -10,7 +10,7 @@ The app is designed around fast server-authoritative state updates with minimal 
 - Join as a player with a name and color.
 - Host/admin screen for loading JSON questions, starting rounds, advancing rounds, resetting, and closing rooms.
 - Server-side round timers, scheduled hints, scoring, closest-guess fallback, and final podium.
-- Real-time player presence and typing bubbles through Phoenix PubSub and Presence.
+- Real-time player presence through Phoenix Presence and high-frequency typing bubbles through Phoenix Channels.
 - Bounded in-memory room model suitable for live event/session style trivia games.
 - Optional synthetic 16-player render test from the admin screen.
 
@@ -76,6 +76,46 @@ mix precommit
 ```
 
 `mix precommit` is the project check used before finishing changes. It compiles with warnings as errors, checks for unused dependencies, formats, and runs the test suite.
+
+## Synthetic Benchmarking
+
+Run the benchmark launch routine:
+
+```sh
+scripts/benchmark_synthetic.sh
+```
+
+Use `BENCHMARK_LABEL` to tag comparable runs:
+
+```sh
+BENCHMARK_LABEL=json_channels scripts/benchmark_synthetic.sh
+```
+
+The launcher writes each run to `benchmark_logs/<timestamp>_<label>.log`. It waits for the server to become ready, waits `BENCHMARK_WARMUP_SECONDS` seconds, and then opens the benchmark route. The default warmup is 3 seconds; use the same value for comparable runs:
+
+```sh
+BENCHMARK_LABEL=json_channels BENCHMARK_WARMUP_SECONDS=5 scripts/benchmark_synthetic.sh
+```
+
+This starts Phoenix with `LIVE_TRIVIA_BENCHMARK=1`, opens `/benchmark/synthetic`, creates a benchmark room, loads the demo quiz, starts the round, and auto-runs the 16-player synthetic websocket test.
+
+Benchmark output is split between:
+
+- Browser console: client render latency summary for synthetic typing updates (`avg`, `p50`, `p95`, `p99`, `max`).
+- Server logs: 5-second benchmark snapshots with typing message count/rate, payload bytes, average/p95/max channel handling time, BEAM reductions, BEAM memory, Linux RSS, Linux process CPU, process count, and run queue.
+- Server logs: one end-of-run `benchmark attempt summary` combining client latency with aggregate typing count/rate, payload bytes, handler timing, reductions, average/max CPU, max RSS/BEAM memory, max run queue, and snapshot count.
+
+You can also start the app manually with telemetry enabled:
+
+```sh
+LIVE_TRIVIA_BENCHMARK=1 LIVE_TRIVIA_BENCHMARK_LABEL=json_channels mix phx.server
+```
+
+Then open:
+
+```text
+http://localhost:3070/benchmark/synthetic
+```
 
 ## Quiz JSON Format
 

@@ -107,8 +107,11 @@ defmodule LiveTriviaWeb.AdminLive do
   @synthetic_keystroke_limit 18
   @synthetic_tick_ms 70
   @synthetic_submitted_clear_delay_ms 2_000
+
+  def demo_questions, do: @example_questions
+
   @impl true
-  def mount(%{"room_id" => room_id}, session, socket) do
+  def mount(%{"room_id" => room_id} = params, session, socket) do
     player_id = Map.fetch!(session, "player_id")
     room = Lobby.get_room(room_id)
 
@@ -123,11 +126,17 @@ defmodule LiveTriviaWeb.AdminLive do
         {:ok, push_navigate(socket, to: ~p"/rooms/#{room_id}")}
 
       true ->
+        benchmark_auto_run? = params["benchmark"] == "synthetic"
+
         if connected?(socket) do
           Game.subscribe(room_id)
           RoomPresence.subscribe(room_id)
           RoomPresence.track_admin(room_id, player_id)
           Lobby.touch_room(room_id)
+
+          if benchmark_auto_run? do
+            Process.send_after(self(), :prepare_synthetic_benchmark, 300)
+          end
         end
 
         socket =
@@ -139,8 +148,9 @@ defmodule LiveTriviaWeb.AdminLive do
           |> assign(:game_state, Game.get_state(room_id))
           |> assign(:players, RoomPresence.players(room_id))
           |> assign(:synthetic_players, [])
-          |> assign(:synthetic_test_running?, false)
-          |> assign(:json_text, Jason.encode!(@example_questions, pretty: true))
+          |> assign(:synthetic_test_running?, benchmark_auto_run?)
+          |> assign(:benchmark_auto_run?, benchmark_auto_run?)
+          |> assign(:json_text, Jason.encode!(demo_questions(), pretty: true))
           |> assign(:validation_error, nil)
 
         {:ok, socket}
@@ -170,30 +180,13 @@ defmodule LiveTriviaWeb.AdminLive do
 
   @impl true
   def handle_event("load_demo", _params, socket) do
-    Game.load_questions(socket.assigns.room_id, @example_questions)
+    Game.load_questions(socket.assigns.room_id, demo_questions())
     Lobby.touch_room(socket.assigns.room_id)
     {:noreply, assign(socket, :validation_error, nil)}
   end
 
   def handle_event("run_synthetic_render_test", _params, socket) do
-    synthetic_players = synthetic_players()
-    untrack_synthetic_players(socket.assigns.room_id, socket.assigns.synthetic_players)
-    track_synthetic_players(socket.assigns.room_id, synthetic_players)
-
-    socket =
-      socket
-      |> assign(:synthetic_players, synthetic_players)
-      |> assign(:players, RoomPresence.players(socket.assigns.room_id))
-      |> assign(:synthetic_test_running?, true)
-      |> push_event("run_synthetic_typing_test", %{
-        players: synthetic_players,
-        guesses: synthetic_guesses(),
-        cycles: @synthetic_test_cycles,
-        tick_ms: @synthetic_tick_ms,
-        keystroke_limit: @synthetic_keystroke_limit
-      })
-
-    {:noreply, socket}
+    {:noreply, start_synthetic_test(socket, benchmark?: false)}
   end
 
   def handle_event("synthetic_submit", %{"cycle" => cycle}, socket) do
@@ -201,7 +194,8 @@ defmodule LiveTriviaWeb.AdminLive do
     {:noreply, broadcast_synthetic_submit(socket, socket.assigns.synthetic_players, cycle)}
   end
 
-  def handle_event("synthetic_test_finished", _params, socket) do
+  def handle_event("synthetic_test_finished", params, socket) do
+    emit_synthetic_client_summary(socket, params)
     {:noreply, assign(socket, :synthetic_test_running?, false)}
   end
 
@@ -246,6 +240,24 @@ defmodule LiveTriviaWeb.AdminLive do
   end
 
   @impl true
+  def handle_info(:prepare_synthetic_benchmark, socket) do
+    if socket.assigns.benchmark_auto_run? do
+      Game.load_questions(socket.assigns.room_id, demo_questions())
+      Game.start_quiz(socket.assigns.room_id)
+      Process.send_after(self(), :run_synthetic_benchmark, 300)
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info(:run_synthetic_benchmark, socket) do
+    if socket.assigns.benchmark_auto_run? do
+      {:noreply, start_synthetic_test(socket, benchmark?: true)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:game_state, game_state}, socket) do
     {:noreply, assign(socket, :game_state, game_state)}
   end
@@ -419,6 +431,61 @@ defmodule LiveTriviaWeb.AdminLive do
   defp pad_hints(hints) do
     hints ++ Enum.map((length(hints) + 1)..5//1, &"Hint #{&1}")
   end
+
+  defp start_synthetic_test(socket, opts) do
+    synthetic_players = synthetic_players()
+    untrack_synthetic_players(socket.assigns.room_id, socket.assigns.synthetic_players)
+    track_synthetic_players(socket.assigns.room_id, synthetic_players)
+
+    socket
+    |> assign(:synthetic_players, synthetic_players)
+    |> assign(:players, RoomPresence.players(socket.assigns.room_id))
+    |> assign(:synthetic_test_running?, true)
+    |> push_event("run_synthetic_typing_test", %{
+      players: synthetic_players,
+      guesses: synthetic_guesses(),
+      cycles: @synthetic_test_cycles,
+      tick_ms: @synthetic_tick_ms,
+      keystroke_limit: @synthetic_keystroke_limit,
+      benchmark: Keyword.get(opts, :benchmark?, false),
+      room_id: socket.assigns.room_id
+    })
+  end
+
+  defp emit_synthetic_client_summary(socket, params) when is_map(params) do
+    if Map.get(params, "benchmark") do
+      :telemetry.execute(
+        [:live_trivia, :synthetic_benchmark, :client_summary],
+        %{
+          samples: parse_number(params["samples"], 0),
+          avg_ms: parse_number(params["avg_ms"], 0.0),
+          p50_ms: parse_number(params["p50_ms"], 0.0),
+          p95_ms: parse_number(params["p95_ms"], 0.0),
+          p99_ms: parse_number(params["p99_ms"], 0.0),
+          max_ms: parse_number(params["max_ms"], 0.0),
+          receive_p95_ms: parse_number(params["receive_p95_ms"], 0.0),
+          receive_p99_ms: parse_number(params["receive_p99_ms"], 0.0),
+          dom_p95_ms: parse_number(params["dom_p95_ms"], 0.0),
+          dom_p99_ms: parse_number(params["dom_p99_ms"], 0.0),
+          duration_ms: parse_number(params["duration_ms"], 0.0)
+        },
+        %{room_id: socket.assigns.room_id}
+      )
+    end
+  end
+
+  defp emit_synthetic_client_summary(_socket, _params), do: :ok
+
+  defp parse_number(value, _default) when is_number(value), do: value
+
+  defp parse_number(value, default) when is_binary(value) do
+    case Float.parse(value) do
+      {number, _rest} -> number
+      :error -> default
+    end
+  end
+
+  defp parse_number(_value, default), do: default
 
   defp synthetic_players do
     colors = PlayerColors.all()

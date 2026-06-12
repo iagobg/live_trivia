@@ -19,6 +19,7 @@ defmodule LiveTriviaWeb.Router do
     pipe_through :browser
 
     live "/", LobbyLive
+    live "/benchmark/synthetic", BenchmarkLive
     live "/rooms/:room_id", PlayerLive
     live "/rooms/:room_id/admin", AdminLive
   end
