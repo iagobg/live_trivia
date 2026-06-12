@@ -116,6 +116,7 @@ Hooks.TypingChannel = {
     this.handleGuessSubmitted = this.handleGuessSubmitted.bind(this)
     this.handleGuessCleared = this.handleGuessCleared.bind(this)
     this.syntheticTimer = null
+    this.syntheticSlotTimer = null
     this.syntheticConnections = []
     this.syntheticRunId = 0
 
@@ -133,6 +134,7 @@ Hooks.TypingChannel = {
     this.el.removeEventListener("input", this.handleInput)
 
     if (this.syntheticTimer) clearTimeout(this.syntheticTimer)
+    if (this.syntheticSlotTimer) clearTimeout(this.syntheticSlotTimer)
     this.disconnectSyntheticPlayers()
 
     if (this.channel) {
@@ -267,6 +269,7 @@ Hooks.TypingChannel = {
   async runSyntheticTypingTest(config) {
     if (!this.channel) return
     if (this.syntheticTimer) clearTimeout(this.syntheticTimer)
+    if (this.syntheticSlotTimer) clearTimeout(this.syntheticSlotTimer)
     this.disconnectSyntheticPlayers()
 
     const roomId = this.el.dataset.roomId
@@ -283,6 +286,10 @@ Hooks.TypingChannel = {
     let connections = []
 
     try {
+      await this.waitForSyntheticPlayerSlots(players, runId)
+
+      if (this.syntheticRunId !== runId) return
+
       connections = await Promise.all(
         players.map(player => this.connectSyntheticPlayer(roomId, player))
       )
@@ -327,6 +334,39 @@ Hooks.TypingChannel = {
         .receive("ok", () => resolve({player, socket, channel}))
         .receive("error", reject)
         .receive("timeout", () => reject(new Error("synthetic channel join timed out")))
+    })
+  },
+
+  waitForSyntheticPlayerSlots(players, runId) {
+    const requiredPlayerIds = new Set(players.map(player => player.player_id))
+    const startedAt = performance.now()
+    const timeoutMs = 5000
+
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        if (this.syntheticRunId !== runId) {
+          reject(new Error("synthetic run cancelled"))
+          return
+        }
+
+        this.cachePlayers()
+
+        const allSlotsReady = [...requiredPlayerIds].every(playerId => this.players.has(playerId))
+
+        if (allSlotsReady) {
+          resolve()
+          return
+        }
+
+        if (performance.now() - startedAt >= timeoutMs) {
+          reject(new Error("synthetic player slots timed out"))
+          return
+        }
+
+        this.syntheticSlotTimer = setTimeout(check, 50)
+      }
+
+      check()
     })
   },
 
@@ -410,7 +450,6 @@ Hooks.TypingChannel = {
     if (guesses.length === 0) return ""
     return guesses[(cycle + this.syntheticIndex(player)) % guesses.length]
   },
-
 
   syntheticIndex(player) {
     const match = String(player.player_id || "").match(/synthetic-(\d+)/)
