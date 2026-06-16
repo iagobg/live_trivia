@@ -107,6 +107,7 @@ defmodule LiveTriviaWeb.AdminLive do
   @synthetic_keystroke_limit 18
   @synthetic_tick_ms 70
   @synthetic_submitted_clear_delay_ms 2_000
+  @synthetic_client_start_delay_ms 100
 
   def demo_questions, do: @example_questions
 
@@ -256,6 +257,10 @@ defmodule LiveTriviaWeb.AdminLive do
     else
       {:noreply, socket}
     end
+  end
+
+  def handle_info({:run_synthetic_typing_test, config}, socket) do
+    {:noreply, push_event(socket, "run_synthetic_typing_test", config)}
   end
 
   def handle_info({:game_state, game_state}, socket) do
@@ -437,11 +442,7 @@ defmodule LiveTriviaWeb.AdminLive do
     untrack_synthetic_players(socket.assigns.room_id, socket.assigns.synthetic_players)
     track_synthetic_players(socket.assigns.room_id, synthetic_players)
 
-    socket
-    |> assign(:synthetic_players, synthetic_players)
-    |> assign(:players, RoomPresence.players(socket.assigns.room_id))
-    |> assign(:synthetic_test_running?, true)
-    |> push_event("run_synthetic_typing_test", %{
+    config = %{
       players: synthetic_players,
       guesses: synthetic_guesses(),
       cycles: @synthetic_test_cycles,
@@ -449,7 +450,18 @@ defmodule LiveTriviaWeb.AdminLive do
       keystroke_limit: @synthetic_keystroke_limit,
       benchmark: Keyword.get(opts, :benchmark?, false),
       room_id: socket.assigns.room_id
-    })
+    }
+
+    Process.send_after(
+      self(),
+      {:run_synthetic_typing_test, config},
+      @synthetic_client_start_delay_ms
+    )
+
+    socket
+    |> assign(:synthetic_players, synthetic_players)
+    |> assign(:players, RoomPresence.players(socket.assigns.room_id))
+    |> assign(:synthetic_test_running?, true)
   end
 
   defp emit_synthetic_client_summary(socket, params) when is_map(params) do

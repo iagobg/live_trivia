@@ -285,7 +285,11 @@ Hooks.TypingChannel = {
   },
 
   async runSyntheticTypingTest(config) {
-    if (!this.channel) return
+    if (!this.channel) {
+      console.warn("Synthetic typing test skipped: typing channel is not connected")
+      this.pushEvent("synthetic_test_finished", {error: "typing_channel_not_connected"})
+      return
+    }
     if (this.syntheticTimer) clearTimeout(this.syntheticTimer)
     if (this.syntheticSlotTimer) clearTimeout(this.syntheticSlotTimer)
     this.disconnectSyntheticPlayers()
@@ -314,11 +318,14 @@ Hooks.TypingChannel = {
       connections = await Promise.all(
         players.map(player => this.connectSyntheticPlayer(roomId, player))
       )
-    } catch (_error) {
+    } catch (error) {
+      console.warn("Synthetic typing test failed to start", error)
       this.disconnectSyntheticPlayers(connections)
 
       if (this.syntheticRunId === runId) {
-        this.pushEvent("synthetic_test_finished", {})
+        this.pushEvent("synthetic_test_finished", {
+          error: error?.message || "synthetic_start_failed",
+        })
       }
 
       return
@@ -361,7 +368,7 @@ Hooks.TypingChannel = {
   waitForSyntheticPlayerSlots(players, runId) {
     const requiredPlayerIds = new Set(players.map(player => player.player_id))
     const startedAt = performance.now()
-    const timeoutMs = 5000
+    const timeoutMs = 15000
 
     return new Promise((resolve, reject) => {
       const check = () => {

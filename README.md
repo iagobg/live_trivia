@@ -204,3 +204,9 @@ docker run --rm \
 Rooms and games are intentionally in memory. This keeps the live event flow simple and fast, but it also means rooms do not survive application restarts. The current limits are conservative: up to 16 rooms and 16 players per room.
 
 For the intended use case, Phoenix LiveView and Elixir handle the real-time coordination well: each game room has a dedicated `LiveTrivia.Game` process, room membership uses Presence, and authoritative state changes fan out over PubSub. High-frequency typing bubbles use Phoenix Channels and client-side rendering so they do not force LiveView diffs, while the browser-side JavaScript remains focused on presentation details rather than game authority.
+
+## Known Issues / Future Improvements
+
+- The current tuning in throttling/flush rate is geared towards high responsiveness, however CPU usage is still too high for real world prod. While the text bubble payloads are currently quite small, there's room for improvement. The next step is probably doing binary payloads to streamline the data even further and skip JSON enconding/decoding. That is still unlikely to bring performance to manageable levels for a high amount of users, but that can be remedied by altering the throttle and flush windows.
+- Currently on smaller vertical desktop resolutions, the players directly below the main orbit will have their text bubble eclipsed by it.
+- Empty space characters create a differently sized typing bubble.
