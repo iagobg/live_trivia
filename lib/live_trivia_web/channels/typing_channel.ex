@@ -4,6 +4,7 @@ defmodule LiveTriviaWeb.TypingChannel do
   alias LiveTrivia.Lobby
 
   @max_text_length 80
+  @timestamp_flag 16
 
   @impl true
   def join("t:" <> topic_id, _payload, socket), do: join_topic(topic_id, socket)
@@ -17,7 +18,7 @@ defmodule LiveTriviaWeb.TypingChannel do
     start_time = System.monotonic_time()
     normalized_payload = normalize_typing_payload(payload)
 
-    broadcast_from!(socket, "t", normalized_payload)
+    broadcast_from!(socket, "t", binary_payload(normalized_payload))
     emit_benchmark_telemetry(socket, normalized_payload, start_time)
 
     {:noreply, socket}
@@ -44,12 +45,17 @@ defmodule LiveTriviaWeb.TypingChannel do
         %{
           count: 1,
           duration: System.monotonic_time() - start_time,
-          payload_bytes: IO.iodata_length(Jason.encode_to_iodata!(payload))
+          payload_bytes: payload_size(payload)
         },
         %{room_id: socket.assigns.room_id}
       )
     end
   end
+
+  defp payload_size({:binary, payload}), do: byte_size(payload)
+  defp payload_size(payload), do: IO.iodata_length(Jason.encode_to_iodata!(payload))
+
+  defp normalize_typing_payload({:binary, payload}), do: normalize_binary_typing_payload(payload)
 
   defp normalize_typing_payload(payload) do
     %{
@@ -75,6 +81,43 @@ defmodule LiveTriviaWeb.TypingChannel do
 
   defp normalize_legacy_player_id(nil), do: nil
   defp normalize_legacy_player_id(player_id), do: player_id |> to_string() |> String.slice(0, 80)
+
+  defp normalize_binary_typing_payload(<<flags, timestamp::float-64, text::binary>>)
+       when Bitwise.band(flags, @timestamp_flag) != 0 do
+    %{
+      i: Bitwise.band(flags, 15),
+      t: String.slice(text, 0, @max_text_length),
+      ts: timestamp
+    }
+  end
+
+  defp normalize_binary_typing_payload(<<flags, text::binary>>) do
+    %{
+      i: Bitwise.band(flags, 15),
+      t: String.slice(text, 0, @max_text_length)
+    }
+  end
+
+  defp normalize_binary_typing_payload(_payload), do: %{i: 0, t: ""}
+
+  defp binary_payload(%{i: player_slot, t: text} = payload) when is_integer(player_slot) do
+    flags =
+      if Map.has_key?(payload, :ts) do
+        Bitwise.bor(player_slot, @timestamp_flag)
+      else
+        player_slot
+      end
+
+    data =
+      case payload do
+        %{ts: timestamp} -> <<flags, timestamp::float-64, text::binary>>
+        _payload -> <<flags, text::binary>>
+      end
+
+    {:binary, data}
+  end
+
+  defp binary_payload(payload), do: payload
 
   defp maybe_put_timestamp(normalized_payload, payload) do
     case Map.get(payload, "ts") do
