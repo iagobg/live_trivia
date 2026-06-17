@@ -275,7 +275,7 @@ defmodule LiveTriviaWeb.AdminLive do
   end
 
   def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff"}, socket),
-    do: {:noreply, assign(socket, :players, RoomPresence.players(socket.assigns.room_id))}
+    do: {:noreply, assign(socket, :players, admin_players(socket))}
 
   def handle_info({:synthetic_clear_submitted, player_id, bubble_id}, socket) do
     broadcast_synthetic_cleared(socket.assigns.room_id, player_id, bubble_id)
@@ -460,8 +460,19 @@ defmodule LiveTriviaWeb.AdminLive do
 
     socket
     |> assign(:synthetic_players, synthetic_players)
-    |> assign(:players, RoomPresence.players(socket.assigns.room_id))
+    |> assign(:players, admin_players(socket, synthetic_players))
     |> assign(:synthetic_test_running?, true)
+  end
+
+  defp admin_players(socket, synthetic_players \\ nil) do
+    synthetic_players = synthetic_players || socket.assigns.synthetic_players || []
+    real_players = RoomPresence.players(socket.assigns.room_id)
+    synthetic_ids = synthetic_players |> Enum.map(& &1.player_id) |> MapSet.new()
+
+    real_players
+    |> Enum.reject(&MapSet.member?(synthetic_ids, &1.player_id))
+    |> Kernel.++(synthetic_players)
+    |> Enum.sort_by(& &1.joined_at)
   end
 
   defp emit_synthetic_client_summary(socket, params) when is_map(params) do

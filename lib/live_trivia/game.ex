@@ -15,6 +15,7 @@ defmodule LiveTrivia.Game do
               player_scores: %{},
               closest_guess: nil,
               round_winner: nil,
+              round_id: 0,
               timer_ref: nil,
               hint_refs: []
   end
@@ -55,6 +56,7 @@ defmodule LiveTrivia.Game do
         phase: :loaded,
         questions: questions,
         current_index: 0,
+        round_id: state.round_id + 1,
         player_scores: %{}
       })
 
@@ -84,7 +86,7 @@ defmodule LiveTrivia.Game do
   def handle_call(:force_reset, _from, state) do
     touch_room()
     cancel_timers(state)
-    state = %State{}
+    state = %State{round_id: state.round_id + 1}
     broadcast(state)
     {:reply, :ok, state}
   end
@@ -129,7 +131,7 @@ defmodule LiveTrivia.Game do
               score: score,
               is_consolation: false
             },
-            timer_ref: schedule_advance(state.current_index),
+            timer_ref: schedule_advance(state.current_index, state.round_id),
             hint_refs: []
         }
 
@@ -149,8 +151,8 @@ defmodule LiveTrivia.Game do
 
   @impl true
   def handle_info(
-        {:hint, round_index, hint_index},
-        %{phase: :in_progress, current_index: round_index} = state
+        {:hint, round_index, round_id, hint_index},
+        %{phase: :in_progress, current_index: round_index, round_id: round_id} = state
       ) do
     state = %{state | revealed_hints: max(state.revealed_hints, hint_index + 1)}
     broadcast(state)
@@ -158,8 +160,8 @@ defmodule LiveTrivia.Game do
   end
 
   def handle_info(
-        {:round_timeout, round_index},
-        %{phase: :in_progress, current_index: round_index} = state
+        {:round_timeout, round_index, round_id},
+        %{phase: :in_progress, current_index: round_index, round_id: round_id} = state
       ) do
     {scores, winner} =
       case {state.closest_guess, state.round_winner} do
@@ -176,7 +178,7 @@ defmodule LiveTrivia.Game do
       | phase: :results,
         player_scores: scores,
         round_winner: winner,
-        timer_ref: schedule_advance(round_index),
+        timer_ref: schedule_advance(round_index, round_id),
         hint_refs: []
     }
 
@@ -184,8 +186,8 @@ defmodule LiveTrivia.Game do
     {:noreply, state}
   end
 
-  def handle_info({:advance_round, round_index}, state) do
-    state = advance_round(state, round_index)
+  def handle_info({:advance_round, round_index, round_id}, state) do
+    state = advance_round(state, round_index, round_id)
     broadcast(state)
     {:noreply, state}
   end
@@ -194,26 +196,38 @@ defmodule LiveTrivia.Game do
 
   defp start_round(state) do
     state = cancel_timers(state)
+    round_id = state.round_id + 1
 
     hint_refs =
       Enum.with_index(@hint_times, fn seconds, index ->
-        Process.send_after(self(), {:hint, state.current_index, index}, seconds * 1_000)
+        Process.send_after(self(), {:hint, state.current_index, round_id, index}, seconds * 1_000)
       end)
 
     %{
       state
       | phase: :in_progress,
+        round_id: round_id,
         round_start_time: now_ms(),
         revealed_hints: 0,
         closest_guess: nil,
         round_winner: nil,
         timer_ref:
-          Process.send_after(self(), {:round_timeout, state.current_index}, @round_duration_ms),
+          Process.send_after(
+            self(),
+            {:round_timeout, state.current_index, round_id},
+            @round_duration_ms
+          ),
         hint_refs: hint_refs
     }
   end
 
-  defp advance_round(%{current_index: current_index} = state, current_index) do
+  defp advance_round(state, round_index), do: advance_round(state, round_index, state.round_id)
+
+  defp advance_round(
+         %{current_index: current_index, round_id: round_id} = state,
+         current_index,
+         round_id
+       ) do
     next_index = current_index + 1
 
     if next_index >= length(state.questions) do
@@ -223,6 +237,7 @@ defmodule LiveTrivia.Game do
         phase: :podium,
         questions: state.questions,
         current_index: state.current_index,
+        round_id: state.round_id,
         player_scores: state.player_scores
       })
     else
@@ -230,10 +245,10 @@ defmodule LiveTrivia.Game do
     end
   end
 
-  defp advance_round(state, _stale_round), do: state
+  defp advance_round(state, _stale_round, _stale_round_id), do: state
 
-  defp schedule_advance(round_index),
-    do: Process.send_after(self(), {:advance_round, round_index}, @results_duration_ms)
+  defp schedule_advance(round_index, round_id),
+    do: Process.send_after(self(), {:advance_round, round_index, round_id}, @results_duration_ms)
 
   defp cancel_timers(state) do
     cancel_refs([state.timer_ref | state.hint_refs])

@@ -28,6 +28,7 @@ import topbar from "../vendor/topbar"
 const Hooks = {}
 const channelSocket = new Socket("/socket", {})
 let channelSocketConnected = false
+const TYPING_PUSH_THROTTLE_MS = 100
 
 const ensureChannelSocket = () => {
   if (!channelSocketConnected) {
@@ -130,11 +131,19 @@ Hooks.TypingChannel = {
     this.handleTyping = this.handleTyping.bind(this)
     this.handleGuessSubmitted = this.handleGuessSubmitted.bind(this)
     this.handleGuessCleared = this.handleGuessCleared.bind(this)
+    this.flushTypingPush = this.flushTypingPush.bind(this)
     this.syntheticTimer = null
     this.syntheticSlotTimer = null
     this.syntheticConnections = []
     this.syntheticRunId = 0
     this.benchmarkRun = null
+    this.pendingTypingPayload = null
+    this.pendingTypingTimer = null
+    this.lastLocalTypingText = null
+    this.lastSentTypingText = null
+    this.lastTypingPushAt = 0
+    this.channelJoined = false
+    this.channelJoin = null
 
     this.cachePlayers()
     this.connectChannel()
@@ -151,6 +160,7 @@ Hooks.TypingChannel = {
 
     if (this.syntheticTimer) clearTimeout(this.syntheticTimer)
     if (this.syntheticSlotTimer) clearTimeout(this.syntheticSlotTimer)
+    if (this.pendingTypingTimer) clearTimeout(this.pendingTypingTimer)
     this.disconnectSyntheticPlayers()
 
     if (this.channel) {
@@ -164,10 +174,21 @@ Hooks.TypingChannel = {
     if (!roomId) return
 
     this.channel = ensureChannelSocket().channel(`typing:${roomId}`, {})
+    this.channelJoined = false
     this.channel.on("typing", this.handleTyping)
     this.channel.on("guess_submitted", this.handleGuessSubmitted)
     this.channel.on("guess_cleared", this.handleGuessCleared)
-    this.channel.join()
+    this.channelJoin = new Promise((resolve, reject) => {
+      this.channel
+        .join()
+        .receive("ok", () => {
+          this.channelJoined = true
+          resolve()
+          this.flushTypingPush()
+        })
+        .receive("error", reject)
+        .receive("timeout", () => reject(new Error("typing channel join timed out")))
+    })
   },
 
   cachePlayers() {
@@ -197,8 +218,72 @@ Hooks.TypingChannel = {
 
     const payload = {p: playerId, t: input.value.slice(0, 80)}
 
-    this.handleTyping(payload)
+    if (payload.t !== this.lastLocalTypingText) {
+      this.lastLocalTypingText = payload.t
+      this.handleTyping(payload)
+    }
+
+    this.queueTypingPush(payload)
+  },
+
+  queueTypingPush(payload) {
+    if (!this.channel) return
+
+    if (payload.t === this.lastSentTypingText) {
+      this.pendingTypingPayload = null
+
+      if (this.pendingTypingTimer) {
+        clearTimeout(this.pendingTypingTimer)
+        this.pendingTypingTimer = null
+      }
+
+      return
+    }
+
+    if (payload.t === "") {
+      if (this.pendingTypingTimer) {
+        clearTimeout(this.pendingTypingTimer)
+        this.pendingTypingTimer = null
+      }
+
+      this.sendTypingPayload(payload)
+      return
+    }
+
+    const now = performance.now()
+    const remainingMs = TYPING_PUSH_THROTTLE_MS - (now - this.lastTypingPushAt)
+
+    if (remainingMs <= 0) {
+      this.sendTypingPayload(payload)
+      return
+    }
+
+    this.pendingTypingPayload = payload
+
+    if (!this.pendingTypingTimer) {
+      this.pendingTypingTimer = setTimeout(this.flushTypingPush, remainingMs)
+    }
+  },
+
+  flushTypingPush() {
+    this.pendingTypingTimer = null
+
+    if (!this.pendingTypingPayload || !this.channelJoined) return
+
+    this.sendTypingPayload(this.pendingTypingPayload)
+  },
+
+  sendTypingPayload(payload) {
+    if (!this.channel || payload.t === this.lastSentTypingText) return
+    if (!this.channelJoined) {
+      this.pendingTypingPayload = payload
+      return
+    }
+
     this.channel.push("typing", payload)
+    this.lastSentTypingText = payload.t
+    this.lastTypingPushAt = performance.now()
+    this.pendingTypingPayload = null
   },
 
   handleTyping(payload) {
@@ -311,6 +396,7 @@ Hooks.TypingChannel = {
     let connections = []
 
     try {
+      await this.waitForTypingChannel(runId)
       await this.waitForSyntheticPlayerSlots(players, runId)
 
       if (this.syntheticRunId !== runId) return
@@ -363,6 +449,17 @@ Hooks.TypingChannel = {
         .receive("error", reject)
         .receive("timeout", () => reject(new Error("synthetic channel join timed out")))
     })
+  },
+
+  async waitForTypingChannel(runId) {
+    if (this.channelJoined) return
+    if (!this.channelJoin) throw new Error("typing channel is not connected")
+
+    await this.channelJoin
+
+    if (this.syntheticRunId !== runId) {
+      throw new Error("synthetic run cancelled")
+    }
   },
 
   waitForSyntheticPlayerSlots(players, runId) {

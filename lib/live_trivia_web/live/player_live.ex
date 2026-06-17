@@ -372,7 +372,6 @@ defmodule LiveTriviaWeb.PlayerLive do
                     disabled={!can_input?(@game_state, @guess_result)}
                     placeholder={guess_placeholder(@game_state, @guess_result)}
                     autocomplete="off"
-                    phx-throttle="40"
                     class={[
                       "w-full rounded-xl border-2 py-4 pl-5 pr-24 text-lg font-medium text-white outline-none transition-all disabled:cursor-not-allowed disabled:opacity-50",
                       input_result_class(@guess_result)
