@@ -18,6 +18,7 @@ defmodule LiveTrivia.Lobby do
       :game_pid,
       :created_at,
       :updated_at,
+      :topic_id,
       :password_hash,
       :password_salt,
       player_colors: %{}
@@ -31,6 +32,10 @@ defmodule LiveTrivia.Lobby do
   def list_rooms, do: GenServer.call(__MODULE__, :list_rooms)
 
   def get_room(room_id), do: GenServer.call(__MODULE__, {:get_room, room_id})
+
+  def room_id_for_topic(topic_id), do: GenServer.call(__MODULE__, {:room_id_for_topic, topic_id})
+
+  def room_topic_id(room_id), do: GenServer.call(__MODULE__, {:room_topic_id, room_id})
 
   def create_room(name, admin_id, password \\ nil) do
     GenServer.call(__MODULE__, {:create_room, name, admin_id, password})
@@ -95,6 +100,28 @@ defmodule LiveTrivia.Lobby do
     {:reply, Map.get(rooms, room_id), rooms}
   end
 
+  def handle_call({:room_id_for_topic, topic_id}, _from, rooms) do
+    room_id =
+      rooms
+      |> Enum.find_value(fn {room_id, room} ->
+        if room.topic_id == topic_id, do: room_id
+      end)
+
+    {:reply, room_id, rooms}
+  end
+
+  def handle_call({:room_topic_id, room_id}, _from, rooms) do
+    topic_id =
+      rooms
+      |> Map.get(room_id)
+      |> case do
+        nil -> nil
+        room -> room.topic_id
+      end
+
+    {:reply, topic_id, rooms}
+  end
+
   def handle_call({:create_room, name, admin_id, password}, _from, rooms) do
     if map_size(rooms) >= @max_rooms do
       {:reply, {:error, :room_limit}, rooms}
@@ -117,6 +144,7 @@ defmodule LiveTrivia.Lobby do
         game_pid: game_pid,
         created_at: now,
         updated_at: now,
+        topic_id: next_topic_id(rooms),
         password_hash: password_hash,
         password_salt: password_salt
       }
@@ -446,6 +474,14 @@ defmodule LiveTrivia.Lobby do
     4
     |> :crypto.strong_rand_bytes()
     |> Base.url_encode64(padding: false)
+  end
+
+  defp next_topic_id(rooms) do
+    used_topic_ids = rooms |> Map.values() |> MapSet.new(& &1.topic_id)
+
+    0..(@max_rooms - 1)
+    |> Enum.find(&(Integer.to_string(&1, 16) not in used_topic_ids))
+    |> Integer.to_string(16)
   end
 
   defp now_ms, do: System.system_time(:millisecond)

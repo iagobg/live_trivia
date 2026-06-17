@@ -46,21 +46,27 @@ const typingBubbleStyle = player =>
   `border-color: ${player.color}aa; background-color: ${player.color}dd; box-shadow: 0 0 18px ${player.color}66;`
 
 const normalizeTypingPayload = payload => ({
+  player_slot: payload.i ?? payload.player_slot ?? payload.playerSlot ?? null,
   player_id: payload.p || payload.player_id || payload.playerId || "",
   text: payload.t || payload.text || "",
   timestamp: payload.ts || null,
 })
 
 const normalizeSubmittedPayload = payload => ({
+  player_slot: payload.i ?? payload.player_slot ?? payload.playerSlot ?? null,
   player_id: payload.p || payload.player_id || payload.playerId || "",
   text: payload.t || payload.text || "",
   bubble_id: payload.b || payload.bubble_id || payload.bubbleId || null,
 })
 
 const normalizeClearedPayload = payload => ({
+  player_slot: payload.i ?? payload.player_slot ?? payload.playerSlot ?? null,
   player_id: payload.p || payload.player_id || payload.playerId || "",
   bubble_id: payload.b || payload.bubble_id || payload.bubbleId || null,
 })
+
+const compactPayload = payload =>
+  Object.fromEntries(Object.entries(payload).filter(([_key, value]) => value !== null && value !== undefined))
 
 
 const percentile = (sortedValues, percentileValue) => {
@@ -129,6 +135,7 @@ document.addEventListener("focusin", event => {
 Hooks.TypingChannel = {
   mounted() {
     this.players = new Map()
+    this.playersBySlot = new Map()
     this.channel = null
     this.handleInput = this.handleInput.bind(this)
     this.handleTyping = this.handleTyping.bind(this)
@@ -174,10 +181,14 @@ Hooks.TypingChannel = {
 
   connectChannel() {
     const roomId = this.el.dataset.roomId
+    const typingTopic = this.el.dataset.typingTopic || `t:${roomId}`
     if (!roomId) return
 
-    this.channel = ensureChannelSocket().channel(`typing:${roomId}`, {})
+    this.channel = ensureChannelSocket().channel(typingTopic, {})
     this.channelJoined = false
+    this.channel.on("t", this.handleTyping)
+    this.channel.on("s", this.handleGuessSubmitted)
+    this.channel.on("c", this.handleGuessCleared)
     this.channel.on("typing", this.handleTyping)
     this.channel.on("guess_submitted", this.handleGuessSubmitted)
     this.channel.on("guess_cleared", this.handleGuessCleared)
@@ -196,11 +207,14 @@ Hooks.TypingChannel = {
 
   cachePlayers() {
     const players = new Map()
+    const playersBySlot = new Map()
 
     this.el.querySelectorAll("[data-role='typing-slot'][data-player-id]").forEach(slot => {
       const playerId = slot.dataset.playerId
+      const playerSlot = Number(slot.dataset.playerSlot)
       const player = players.get(playerId) || {
         player_id: playerId,
+        player_slot: Number.isInteger(playerSlot) ? playerSlot : null,
         name: slot.dataset.playerName || "",
         color: slot.dataset.playerColor || "#888888",
         slots: [],
@@ -208,9 +222,14 @@ Hooks.TypingChannel = {
 
       player.slots.push(slot)
       players.set(playerId, player)
+
+      if (Number.isInteger(player.player_slot)) {
+        playersBySlot.set(player.player_slot, player)
+      }
     })
 
     this.players = players
+    this.playersBySlot = playersBySlot
   },
 
   handleInput(event) {
@@ -219,11 +238,13 @@ Hooks.TypingChannel = {
 
     if (!input || !playerId || !this.channel) return
 
-    const payload = {p: playerId, t: input.value.slice(0, 80)}
+    const player = this.players.get(playerId)
+    const text = input.value.slice(0, 80)
+    const payload = Number.isInteger(player?.player_slot) ? {i: player.player_slot, t: text} : {p: playerId, t: text}
 
     if (payload.t !== this.lastLocalTypingText) {
       this.lastLocalTypingText = payload.t
-      this.handleTyping(payload)
+      this.handleTyping(player ? payload : {p: playerId, t: payload.t})
     }
 
     this.queueTypingPush(payload)
@@ -283,7 +304,7 @@ Hooks.TypingChannel = {
       return
     }
 
-    this.channel.push("typing", payload)
+    this.channel.push("t", compactPayload(payload))
     this.lastSentTypingText = payload.t
     this.lastTypingPushAt = performance.now()
     this.pendingTypingPayload = null
@@ -291,7 +312,7 @@ Hooks.TypingChannel = {
 
   handleTyping(payload) {
     const update = normalizeTypingPayload(payload)
-    const player = this.players.get(update.player_id)
+    const player = this.playerForUpdate(update)
 
     if (!player) return
 
@@ -302,7 +323,7 @@ Hooks.TypingChannel = {
 
   handleGuessSubmitted(payload) {
     const update = normalizeSubmittedPayload(payload)
-    const player = this.players.get(update.player_id)
+    const player = this.playerForUpdate(update)
 
     if (!player) return
 
@@ -314,7 +335,7 @@ Hooks.TypingChannel = {
 
   handleGuessCleared(payload) {
     const update = normalizeClearedPayload(payload)
-    const player = this.players.get(update.player_id)
+    const player = this.playerForUpdate(update)
 
     if (!player) return
 
@@ -347,6 +368,16 @@ Hooks.TypingChannel = {
 
   removeLiveBubble(slot) {
     slot.querySelector("[data-role='live-typing-bubble']")?.remove()
+  },
+
+  playerForUpdate(update) {
+    const slot = Number(update.player_slot)
+
+    if (Number.isInteger(slot) && this.playersBySlot.has(slot)) {
+      return this.playersBySlot.get(slot)
+    }
+
+    return this.players.get(update.player_id)
   },
 
   addSubmittedBubble(slot, player, update) {
@@ -383,6 +414,7 @@ Hooks.TypingChannel = {
     this.disconnectSyntheticPlayers()
 
     const roomId = this.el.dataset.roomId
+    const typingTopic = this.el.dataset.typingTopic || `t:${roomId}`
     const players = config.players || []
     const cycles = Number(config.cycles || 1)
     const tickMs = Number(config.tick_ms || 70)
@@ -404,7 +436,7 @@ Hooks.TypingChannel = {
 
       if (this.syntheticRunId !== runId) return
 
-      await this.connectSyntheticPlayers(roomId, players, runId, connections)
+      await this.connectSyntheticPlayers(typingTopic, players, runId, connections)
     } catch (error) {
       console.warn("Synthetic typing test failed to start", error)
       this.disconnectSyntheticPlayers(connections)
@@ -437,13 +469,13 @@ Hooks.TypingChannel = {
     })
   },
 
-  async connectSyntheticPlayers(roomId, players, runId, connections) {
+  async connectSyntheticPlayers(typingTopic, players, runId, connections) {
     for (let index = 0; index < players.length; index += SYNTHETIC_CONNECT_BATCH_SIZE) {
       if (this.syntheticRunId !== runId) throw new Error("synthetic run cancelled")
 
       const batch = players.slice(index, index + SYNTHETIC_CONNECT_BATCH_SIZE)
       const batchConnections = await Promise.all(
-        batch.map(player => this.connectSyntheticPlayer(roomId, player))
+        batch.map(player => this.connectSyntheticPlayer(typingTopic, player))
       )
 
       connections.push(...batchConnections)
@@ -457,10 +489,10 @@ Hooks.TypingChannel = {
     }
   },
 
-  connectSyntheticPlayer(roomId, player) {
+  connectSyntheticPlayer(typingTopic, player) {
     return new Promise((resolve, reject) => {
       const socket = new Socket("/socket", {params: {synthetic_player_id: player.player_id}})
-      const channel = socket.channel(`typing:${roomId}`, {})
+      const channel = socket.channel(typingTopic, {})
 
       socket.connect()
 
@@ -589,11 +621,11 @@ Hooks.TypingChannel = {
 
     if (!connection) return
 
-    const payload = {p: player.player_id, t: text}
+    const payload = {i: this.syntheticIndex(player) - 1, t: text}
 
     if (this.benchmarkRun) payload.ts = performance.now()
 
-    connection.channel.push("typing", payload)
+    connection.channel.push("t", payload)
   },
 
   newBenchmarkRun(roomId) {

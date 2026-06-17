@@ -43,6 +43,7 @@ defmodule LiveTriviaWeb.PlayerOrbitComponent do
         id={"desktop-typing-slot-#{@player.player_id}"}
         data-role="typing-slot"
         data-variant="desktop"
+        data-player-slot={@index}
         data-player-id={@player.player_id}
         data-player-name={@player.name}
         data-player-color={@player.color}

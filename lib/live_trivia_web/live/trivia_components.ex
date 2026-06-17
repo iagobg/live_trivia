@@ -15,6 +15,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
       id={"game-stage-#{@room_id}"}
       phx-hook="TypingChannel"
       data-room-id={@room_id}
+      data-typing-topic={LiveTriviaWeb.RoomPresence.typing_topic(@room_id)}
       data-current-player-id={@current_player_id}
       class="keyboard-aware-player-screen relative min-h-[var(--app-viewport-height,100svh)] overflow-hidden bg-gray-950 text-white sm:min-h-screen"
     >
@@ -87,6 +88,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
         id={"mobile-typing-slot-#{player.player_id}"}
         data-role="typing-slot"
         data-variant="mobile"
+        data-player-slot={index}
         data-player-id={player.player_id}
         data-player-name={player.name}
         data-player-color={player.color}

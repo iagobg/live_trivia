@@ -608,25 +608,34 @@ defmodule LiveTriviaWeb.PlayerLive do
   defp broadcast_typing(socket, typing_text) do
     LiveTriviaWeb.Endpoint.broadcast(
       RoomPresence.typing_topic(socket.assigns.room_id),
-      "typing",
-      %{p: socket.assigns.player_id, t: typing_text}
+      "t",
+      Map.put(player_ref_payload(socket), :t, typing_text)
     )
   end
 
   defp broadcast_guess_submitted(socket, text, bubble_id) do
     LiveTriviaWeb.Endpoint.broadcast(
       RoomPresence.typing_topic(socket.assigns.room_id),
-      "guess_submitted",
-      %{p: socket.assigns.player_id, t: text, b: bubble_id}
+      "s",
+      socket
+      |> player_ref_payload()
+      |> Map.merge(%{t: text, b: bubble_id})
     )
   end
 
   defp broadcast_guess_cleared(socket, bubble_id) do
     LiveTriviaWeb.Endpoint.broadcast(
       RoomPresence.typing_topic(socket.assigns.room_id),
-      "guess_cleared",
-      %{p: socket.assigns.player_id, b: bubble_id}
+      "c",
+      Map.put(player_ref_payload(socket), :b, bubble_id)
     )
+  end
+
+  defp player_ref_payload(socket) do
+    case RoomPresence.player_slot(socket.assigns.room_id, socket.assigns.player_id) do
+      nil -> %{p: socket.assigns.player_id}
+      player_slot -> %{i: player_slot}
+    end
   end
 
   defp update_color_selection(socket, color) do

@@ -53,6 +53,13 @@ defmodule LiveTriviaWeb.RoomPresence do
     |> colors_from_presence(player_id)
   end
 
+  def player_slot(room_id, player_id) do
+    room_id
+    |> players()
+    |> Enum.take(16)
+    |> Enum.find_index(&(&1.player_id == player_id))
+  end
+
   def subscribe(room_id) do
     Phoenix.PubSub.subscribe(LiveTrivia.PubSub, players_topic(room_id))
     Phoenix.PubSub.subscribe(LiveTrivia.PubSub, room_topic(room_id))
@@ -62,7 +69,13 @@ defmodule LiveTriviaWeb.RoomPresence do
   def admins_topic(room_id), do: "admins:#{room_id}"
   def room_topic(room_id), do: "room:#{room_id}"
   def color_topic(room_id), do: "color_select:#{room_id}"
-  def typing_topic(room_id), do: "typing:#{room_id}"
+  def typing_topic(room_id), do: "t:#{typing_topic_id(room_id)}"
+
+  defp typing_topic_id(room_id) do
+    LiveTrivia.Lobby.room_topic_id(room_id) || room_id
+  catch
+    :exit, _reason -> room_id
+  end
 
   defp colors_from_presence(topic, player_id) do
     topic

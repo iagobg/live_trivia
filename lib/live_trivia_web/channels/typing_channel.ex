@@ -6,22 +6,35 @@ defmodule LiveTriviaWeb.TypingChannel do
   @max_text_length 80
 
   @impl true
+  def join("t:" <> topic_id, _payload, socket), do: join_topic(topic_id, socket)
+
   def join("typing:" <> room_id, _payload, socket) do
+    join_room(room_id, socket)
+  end
+
+  @impl true
+  def handle_in(event, payload, socket) when event in ["t", "typing"] do
+    start_time = System.monotonic_time()
+    normalized_payload = normalize_typing_payload(payload)
+
+    broadcast_from!(socket, "t", normalized_payload)
+    emit_benchmark_telemetry(socket, normalized_payload, start_time)
+
+    {:noreply, socket}
+  end
+
+  defp join_room(room_id, socket) do
     case Lobby.get_room(room_id) do
       nil -> {:error, %{reason: "room_closed"}}
       _room -> {:ok, assign(socket, :room_id, room_id)}
     end
   end
 
-  @impl true
-  def handle_in("typing", payload, socket) do
-    start_time = System.monotonic_time()
-    normalized_payload = normalize_typing_payload(payload)
-
-    broadcast_from!(socket, "typing", normalized_payload)
-    emit_benchmark_telemetry(socket, normalized_payload, start_time)
-
-    {:noreply, socket}
+  defp join_topic(topic_id, socket) do
+    case Lobby.room_id_for_topic(topic_id) do
+      nil -> join_room(topic_id, socket)
+      room_id -> join_room(room_id, socket)
+    end
   end
 
   defp emit_benchmark_telemetry(socket, payload, start_time) do
@@ -40,11 +53,28 @@ defmodule LiveTriviaWeb.TypingChannel do
 
   defp normalize_typing_payload(payload) do
     %{
-      p: payload |> compact_get("p", "player_id") |> to_string() |> String.slice(0, 80),
+      i: payload |> compact_get("i", "player_slot") |> normalize_player_slot(),
+      p: payload |> compact_get("p", "player_id") |> normalize_legacy_player_id(),
       t: payload |> compact_get("t", "text") |> to_string() |> String.slice(0, @max_text_length)
     }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
     |> maybe_put_timestamp(payload)
   end
+
+  defp normalize_player_slot(slot) when is_integer(slot) and slot >= 0 and slot <= 15, do: slot
+
+  defp normalize_player_slot(slot) when is_binary(slot) do
+    case Integer.parse(slot) do
+      {slot, ""} -> normalize_player_slot(slot)
+      _other -> nil
+    end
+  end
+
+  defp normalize_player_slot(_slot), do: nil
+
+  defp normalize_legacy_player_id(nil), do: nil
+  defp normalize_legacy_player_id(player_id), do: player_id |> to_string() |> String.slice(0, 80)
 
   defp maybe_put_timestamp(normalized_payload, payload) do
     case Map.get(payload, "ts") do
