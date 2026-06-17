@@ -551,7 +551,7 @@ defmodule LiveTriviaWeb.AdminLive do
 
       broadcast_synthetic_submitted(
         socket.assigns.room_id,
-        player.player_id,
+        player,
         guess_text,
         bubble_id
       )
@@ -566,19 +566,19 @@ defmodule LiveTriviaWeb.AdminLive do
     socket
   end
 
-  defp broadcast_synthetic_submitted(room_id, player_id, text, bubble_id) do
+  defp broadcast_synthetic_submitted(room_id, player, text, bubble_id) do
     LiveTriviaWeb.Endpoint.broadcast(
       RoomPresence.typing_topic(room_id),
-      "guess_submitted",
-      %{p: player_id, t: text, b: bubble_id}
+      "s",
+      %{i: synthetic_index(player) - 1, t: text, b: bubble_id}
     )
   end
 
   defp broadcast_synthetic_cleared(room_id, player_id, bubble_id) do
     LiveTriviaWeb.Endpoint.broadcast(
       RoomPresence.typing_topic(room_id),
-      "guess_cleared",
-      %{p: player_id, b: bubble_id}
+      "c",
+      %{i: synthetic_index(%{player_id: player_id}) - 1, b: bubble_id}
     )
   end
 

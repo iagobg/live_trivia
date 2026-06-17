@@ -1,6 +1,7 @@
 defmodule LiveTriviaWeb.UserSocket do
   use Phoenix.Socket
 
+  channel "t:*", LiveTriviaWeb.TypingChannel
   channel "typing:*", LiveTriviaWeb.TypingChannel
 
   @impl true
