@@ -29,6 +29,9 @@ const Hooks = {}
 const channelSocket = new Socket("/socket", {})
 let channelSocketConnected = false
 const TYPING_PUSH_THROTTLE_MS = 100
+const SYNTHETIC_CHANNEL_JOIN_TIMEOUT_MS = 30000
+const SYNTHETIC_CONNECT_BATCH_SIZE = 4
+const SYNTHETIC_CONNECT_BATCH_DELAY_MS = 150
 
 const ensureChannelSocket = () => {
   if (!channelSocketConnected) {
@@ -401,9 +404,7 @@ Hooks.TypingChannel = {
 
       if (this.syntheticRunId !== runId) return
 
-      connections = await Promise.all(
-        players.map(player => this.connectSyntheticPlayer(roomId, player))
-      )
+      await this.connectSyntheticPlayers(roomId, players, runId, connections)
     } catch (error) {
       console.warn("Synthetic typing test failed to start", error)
       this.disconnectSyntheticPlayers(connections)
@@ -436,6 +437,26 @@ Hooks.TypingChannel = {
     })
   },
 
+  async connectSyntheticPlayers(roomId, players, runId, connections) {
+    for (let index = 0; index < players.length; index += SYNTHETIC_CONNECT_BATCH_SIZE) {
+      if (this.syntheticRunId !== runId) throw new Error("synthetic run cancelled")
+
+      const batch = players.slice(index, index + SYNTHETIC_CONNECT_BATCH_SIZE)
+      const batchConnections = await Promise.all(
+        batch.map(player => this.connectSyntheticPlayer(roomId, player))
+      )
+
+      connections.push(...batchConnections)
+
+      if (
+        index + SYNTHETIC_CONNECT_BATCH_SIZE < players.length &&
+        this.syntheticRunId === runId
+      ) {
+        await this.waitForSyntheticConnectBatchDelay(runId)
+      }
+    }
+  },
+
   connectSyntheticPlayer(roomId, player) {
     return new Promise((resolve, reject) => {
       const socket = new Socket("/socket", {params: {synthetic_player_id: player.player_id}})
@@ -444,10 +465,28 @@ Hooks.TypingChannel = {
       socket.connect()
 
       channel
-        .join()
+        .join(SYNTHETIC_CHANNEL_JOIN_TIMEOUT_MS)
         .receive("ok", () => resolve({player, socket, channel}))
-        .receive("error", reject)
-        .receive("timeout", () => reject(new Error("synthetic channel join timed out")))
+        .receive("error", error => {
+          socket.disconnect()
+          reject(error)
+        })
+        .receive("timeout", () => {
+          socket.disconnect()
+          reject(new Error("synthetic channel join timed out"))
+        })
+    })
+  },
+
+  waitForSyntheticConnectBatchDelay(runId) {
+    return new Promise((resolve, reject) => {
+      this.syntheticSlotTimer = setTimeout(() => {
+        if (this.syntheticRunId === runId) {
+          resolve()
+        } else {
+          reject(new Error("synthetic run cancelled"))
+        }
+      }, SYNTHETIC_CONNECT_BATCH_DELAY_MS)
     })
   },
 
