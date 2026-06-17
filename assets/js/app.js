@@ -68,6 +68,45 @@ const normalizeClearedPayload = payload => ({
 const compactPayload = payload =>
   Object.fromEntries(Object.entries(payload).filter(([_key, value]) => value !== null && value !== undefined))
 
+const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder()
+const TYPING_BINARY_TIMESTAMP_FLAG = 16
+
+const encodeTypingBinaryPayload = payload => {
+  if (!Number.isInteger(payload.i) || payload.i < 0 || payload.i > 15) return null
+
+  const textBytes = textEncoder.encode(payload.t || "")
+  const hasTimestamp = typeof payload.ts === "number"
+  const headerLength = hasTimestamp ? 9 : 1
+  const buffer = new ArrayBuffer(headerLength + textBytes.byteLength)
+  const view = new DataView(buffer)
+  const bytes = new Uint8Array(buffer)
+
+  view.setUint8(0, payload.i | (hasTimestamp ? TYPING_BINARY_TIMESTAMP_FLAG : 0))
+
+  if (hasTimestamp) {
+    view.setFloat64(1, payload.ts)
+  }
+
+  bytes.set(textBytes, headerLength)
+
+  return buffer
+}
+
+const decodeTypingBinaryPayload = payload => {
+  const view = new DataView(payload)
+  const flags = view.getUint8(0)
+  const hasTimestamp = (flags & TYPING_BINARY_TIMESTAMP_FLAG) !== 0
+  const textOffset = hasTimestamp ? 9 : 1
+
+  return {
+    player_slot: flags & 15,
+    player_id: "",
+    text: textDecoder.decode(payload.slice(textOffset)),
+    timestamp: hasTimestamp ? view.getFloat64(1) : null,
+  }
+}
+
 
 const percentile = (sortedValues, percentileValue) => {
   if (sortedValues.length === 0) return 0
@@ -304,14 +343,14 @@ Hooks.TypingChannel = {
       return
     }
 
-    this.channel.push("t", compactPayload(payload))
+    this.channel.push("t", encodeTypingBinaryPayload(payload) || compactPayload(payload))
     this.lastSentTypingText = payload.t
     this.lastTypingPushAt = performance.now()
     this.pendingTypingPayload = null
   },
 
   handleTyping(payload) {
-    const update = normalizeTypingPayload(payload)
+    const update = payload instanceof ArrayBuffer ? decodeTypingBinaryPayload(payload) : normalizeTypingPayload(payload)
     const player = this.playerForUpdate(update)
 
     if (!player) return
@@ -625,7 +664,7 @@ Hooks.TypingChannel = {
 
     if (this.benchmarkRun) payload.ts = performance.now()
 
-    connection.channel.push("t", payload)
+    connection.channel.push("t", encodeTypingBinaryPayload(payload) || compactPayload(payload))
   },
 
   newBenchmarkRun(roomId) {
