@@ -105,7 +105,7 @@ defmodule LiveTriviaWeb.AdminLive do
   @synthetic_player_count 16
   @synthetic_test_cycles 5
   @synthetic_keystroke_limit 18
-  @synthetic_tick_ms 70
+  @synthetic_tick_ms 100
   @synthetic_submitted_clear_delay_ms 2_000
   @synthetic_client_start_delay_ms 100
 

@@ -456,7 +456,7 @@ Hooks.TypingChannel = {
     const typingTopic = this.el.dataset.typingTopic || `t:${roomId}`
     const players = config.players || []
     const cycles = Number(config.cycles || 1)
-    const tickMs = Number(config.tick_ms || 70)
+    const tickMs = Math.max(Number(config.tick_ms || TYPING_PUSH_THROTTLE_MS), TYPING_PUSH_THROTTLE_MS)
     const keystrokeLimit = Number(config.keystroke_limit || 18)
     const guesses = config.guesses || []
     const benchmark = config.benchmark === true
