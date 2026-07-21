@@ -300,6 +300,8 @@ defmodule LiveTrivia.Game do
 
   defp normalize(text) do
     text
+    |> String.normalize(:nfd)
+    |> String.replace(~r/\p{Mn}/u, "")
     |> String.downcase()
     |> String.trim()
     |> String.replace(~r/[^\w\s']/, "")

@@ -105,6 +105,8 @@ Benchmark output is split between:
 - Server logs: 5-second benchmark snapshots with typing message count/rate, payload bytes, average/p95/max channel handling time, BEAM reductions, BEAM memory, Linux RSS, Linux process CPU, process count, and run queue.
 - Server logs: one end-of-run `benchmark attempt summary` combining client latency with aggregate typing count/rate, payload bytes, handler timing, reductions, average/max CPU, max RSS/BEAM memory, max run queue, and snapshot count.
 
+On the current Oracle VPS deployment, the 16-player synthetic typing test is no longer CPU-bound. After the channel payload optimizations and the move to the VPS, the benchmark run sits around 0.7% CPU usage for the simulated 16-player room.
+
 You can also start the app manually with telemetry enabled:
 
 ```sh
@@ -207,6 +209,6 @@ For the intended use case, Phoenix LiveView and Elixir handle the real-time coor
 
 ## Known Issues / Future Improvements
 
-- The current tuning in throttling/flush rate is geared towards high responsiveness, however CPU usage is still too high for real world prod. While the text bubble payloads are currently quite small, there's room for improvement. The next step is probably doing binary payloads to streamline the data even further and skip JSON enconding/decoding. That is still unlikely to bring performance to manageable levels for a high amount of users, but that can be remedied by altering the throttle and flush windows.
+- Keep validating larger or longer benchmark runs beyond the current 16-player synthetic test, which now sits around 0.7% CPU usage on the Oracle VPS deployment.
 - Currently on smaller vertical desktop resolutions, the players directly below the main orbit will have their text bubble eclipsed by it.
 - Empty space characters create a differently sized typing bubble.

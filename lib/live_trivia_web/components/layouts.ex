@@ -41,6 +41,41 @@ defmodule LiveTriviaWeb.Layouts do
   end
 
   @doc """
+  Renders the Live Trivia brand mark.
+  """
+  attr :class, :string, default: nil
+  attr :mark_class, :string, default: "h-11 w-11"
+  attr :text_class, :string, default: "text-lg font-black tracking-wide text-white"
+  attr :show_name, :boolean, default: true
+
+  def logo(assigns) do
+    ~H"""
+    <.link
+      navigate={~p"/"}
+      aria-label="Live Trivia home"
+      class={[
+        "group inline-flex items-center gap-3 rounded-xl outline-none transition focus-visible:ring-2 focus-visible:ring-indigo-300/70",
+        @class
+      ]}
+    >
+      <span class={[
+        "flex shrink-0 items-center justify-center rounded-xl border border-indigo-300/20 bg-gray-950/70 p-1 shadow-[0_0_24px_rgba(129,140,248,0.22)] transition group-hover:border-indigo-200/50",
+        @mark_class
+      ]}>
+        <img
+          src={~p"/images/live-trivia-mark.png"}
+          alt=""
+          class="h-full w-full object-contain"
+          width="1254"
+          height="1254"
+        />
+      </span>
+      <span :if={@show_name} class={@text_class}>Live Trivia</span>
+    </.link>
+    """
+  end
+
+  @doc """
   Shows the flash group with standard titles and content.
 
   ## Examples

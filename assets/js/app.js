@@ -450,7 +450,6 @@ Hooks.TypingChannel = {
     }
     if (this.syntheticTimer) clearTimeout(this.syntheticTimer)
     if (this.syntheticSlotTimer) clearTimeout(this.syntheticSlotTimer)
-    this.disconnectSyntheticPlayers()
 
     const roomId = this.el.dataset.roomId
     const typingTopic = this.el.dataset.typingTopic || `t:${roomId}`
@@ -466,6 +465,7 @@ Hooks.TypingChannel = {
     this.syntheticRunId = runId
     this.benchmarkRun = benchmark ? this.newBenchmarkRun(roomIdForBenchmark) : null
     this.cachePlayers()
+    this.pruneSyntheticConnections(typingTopic, players)
 
     let connections = []
 
@@ -478,7 +478,7 @@ Hooks.TypingChannel = {
       await this.connectSyntheticPlayers(typingTopic, players, runId, connections)
     } catch (error) {
       console.warn("Synthetic typing test failed to start", error)
-      this.disconnectSyntheticPlayers(connections)
+      this.disconnectNewSyntheticConnections(connections)
 
       if (this.syntheticRunId === runId) {
         this.pushEvent("synthetic_test_finished", {
@@ -490,7 +490,7 @@ Hooks.TypingChannel = {
     }
 
     if (this.syntheticRunId !== runId) {
-      this.disconnectSyntheticPlayers(connections)
+      this.disconnectNewSyntheticConnections(connections)
       return
     }
 
@@ -514,7 +514,7 @@ Hooks.TypingChannel = {
 
       const batch = players.slice(index, index + SYNTHETIC_CONNECT_BATCH_SIZE)
       const batchConnections = await Promise.all(
-        batch.map(player => this.connectSyntheticPlayer(typingTopic, player))
+        batch.map(player => this.ensureSyntheticPlayerConnection(typingTopic, player))
       )
 
       connections.push(...batchConnections)
@@ -528,6 +528,22 @@ Hooks.TypingChannel = {
     }
   },
 
+  ensureSyntheticPlayerConnection(typingTopic, player) {
+    const existing = this.syntheticConnections.find(connection => {
+      return (
+        connection.player.player_id === player.player_id &&
+        this.syntheticConnectionJoined(connection, typingTopic)
+      )
+    })
+
+    if (existing) {
+      existing.player = player
+      return Promise.resolve(existing)
+    }
+
+    return this.connectSyntheticPlayer(typingTopic, player)
+  },
+
   connectSyntheticPlayer(typingTopic, player) {
     return new Promise((resolve, reject) => {
       const socket = new Socket("/socket", {params: {synthetic_player_id: player.player_id}})
@@ -537,7 +553,7 @@ Hooks.TypingChannel = {
 
       channel
         .join(SYNTHETIC_CHANNEL_JOIN_TIMEOUT_MS)
-        .receive("ok", () => resolve({player, socket, channel}))
+        .receive("ok", () => resolve({player, socket, channel, typingTopic}))
         .receive("error", error => {
           socket.disconnect()
           reject(error)
@@ -605,15 +621,46 @@ Hooks.TypingChannel = {
     })
   },
 
-  disconnectSyntheticPlayers(connections = this.syntheticConnections) {
-    connections.forEach(({channel, socket}) => {
-      channel.leave()
-      socket.disconnect()
+  pruneSyntheticConnections(typingTopic, players) {
+    const requiredPlayerIds = new Set(players.map(player => player.player_id))
+
+    this.syntheticConnections = this.syntheticConnections.filter(connection => {
+      const keep =
+        requiredPlayerIds.has(connection.player.player_id) &&
+        this.syntheticConnectionJoined(connection, typingTopic)
+
+      if (!keep) this.disconnectSyntheticConnection(connection)
+
+      return keep
     })
+  },
+
+  syntheticConnectionJoined(connection, typingTopic) {
+    return (
+      connection.typingTopic === typingTopic &&
+      connection.channel?.state === "joined" &&
+      connection.socket?.isConnected?.()
+    )
+  },
+
+  disconnectSyntheticPlayers(connections = this.syntheticConnections) {
+    connections.forEach(connection => this.disconnectSyntheticConnection(connection))
 
     if (connections === this.syntheticConnections) {
       this.syntheticConnections = []
     }
+  },
+
+  disconnectNewSyntheticConnections(connections) {
+    const reusableConnections = new Set(this.syntheticConnections)
+    const newConnections = connections.filter(connection => !reusableConnections.has(connection))
+
+    this.disconnectSyntheticPlayers(newConnections)
+  },
+
+  disconnectSyntheticConnection({channel, socket}) {
+    channel.leave()
+    socket.disconnect()
   },
 
   runSyntheticCycle(state) {
@@ -641,7 +688,6 @@ Hooks.TypingChannel = {
 
     if (nextCycle >= state.cycles) {
       this.syntheticTimer = setTimeout(() => {
-        this.disconnectSyntheticPlayers()
         this.pushEvent("synthetic_test_finished", this.finishBenchmarkRun())
       }, 300)
       return
@@ -941,36 +987,156 @@ Hooks.GuessInputFocus = {
   },
 }
 
+Hooks.HintStack = {
+  mounted() {
+    this.previousRects = new Map()
+    this.captureHintRects()
+  },
+
+  beforeUpdate() {
+    this.captureHintRects()
+  },
+
+  updated() {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      this.captureHintRects()
+      return
+    }
+
+    const currentRows = this.hintRows()
+    const rowStep = this.rowStep(currentRows)
+
+    currentRows.forEach(row => {
+      const previousRect = this.previousRects.get(row.id)
+      const currentRect = row.getBoundingClientRect()
+
+      if (previousRect) {
+        const deltaY = previousRect.top - currentRect.top
+
+        if (Math.abs(deltaY) > 0.5) {
+          row.animate(
+            [
+              {transform: `translateY(${deltaY}px)`},
+              {transform: "translateY(0)"},
+            ],
+            {duration: 260, easing: "cubic-bezier(0.2, 0, 0, 1)"}
+          )
+        }
+      } else {
+        row.animate(
+          [
+            {opacity: 0, transform: `translateY(${rowStep}px)`},
+            {opacity: 1, transform: "translateY(0)"},
+          ],
+          {duration: 260, easing: "cubic-bezier(0.2, 0, 0, 1)"}
+        )
+      }
+    })
+
+    this.captureHintRects()
+  },
+
+  captureHintRects() {
+    this.previousRects = new Map(
+      this.hintRows().map(row => [row.id, row.getBoundingClientRect()])
+    )
+  },
+
+  hintRows() {
+    return Array.from(this.el.querySelectorAll(".hint-ticker"))
+  },
+
+  rowStep(rows) {
+    const [first, second] = rows
+    if (first && second) return second.getBoundingClientRect().top - first.getBoundingClientRect().top
+    if (first) return first.getBoundingClientRect().height + 4
+    return 24
+  },
+}
+const hintTickerState = new Map()
+
 Hooks.HintTicker = {
   mounted() {
     this.content = this.el.querySelector(".hint-ticker-content")
+    this.lastText = null
+    this.tickerFrame = null
     this.updateTicker()
   },
 
   updated() {
     this.content = this.el.querySelector(".hint-ticker-content")
-    this.updateTicker()
+    this.updateTicker({preserve: true})
   },
 
-  updateTicker() {
+  destroyed() {
+    if (this.tickerFrame) cancelAnimationFrame(this.tickerFrame)
+  },
+
+  updateTicker({preserve = false} = {}) {
     if (!this.content) return
 
-    this.el.classList.remove("is-scrolling")
-    this.content.style.removeProperty("--hint-overflow")
-    this.content.style.removeProperty("--hint-duration")
+    const text = this.content.textContent || ""
+    const key = this.tickerKey(text)
+    const keepCurrentAnimation =
+      preserve && this.el.classList.contains("is-scrolling") && text === this.lastText
 
-    requestAnimationFrame(() => {
+    if (!keepCurrentAnimation) this.resetTicker({forget: false})
+    if (this.tickerFrame) cancelAnimationFrame(this.tickerFrame)
+
+    this.tickerFrame = requestAnimationFrame(() => {
+      this.tickerFrame = null
+      if (!this.content) return
+
       const styles = window.getComputedStyle(this.el)
       const horizontalPadding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight)
       const availableWidth = this.el.clientWidth - horizontalPadding
       const overflow = this.content.scrollWidth - availableWidth
 
-      if (overflow <= 4) return
+      this.lastText = text
 
-      this.content.style.setProperty("--hint-overflow", `${overflow}px`)
-      this.content.style.setProperty("--hint-duration", "4s")
+      if (overflow <= 4) {
+        this.resetTicker({key})
+        return
+      }
+
+      const durationMs = 4000
+      const state = this.tickerState(key, durationMs)
+      const elapsedMs = (performance.now() - state.startedAt) % durationMs
+
+      this.setTickerProperty("--hint-overflow", `${Math.ceil(overflow)}px`)
+      this.setTickerProperty("--hint-duration", `${durationMs}ms`)
+      this.setTickerProperty("--hint-delay", `-${Math.round(elapsedMs)}ms`)
       this.el.classList.add("is-scrolling")
     })
+  },
+
+  resetTicker({key = null, forget = true} = {}) {
+    this.el.classList.remove("is-scrolling")
+    this.content?.style.removeProperty("--hint-overflow")
+    this.content?.style.removeProperty("--hint-duration")
+    this.content?.style.removeProperty("--hint-delay")
+
+    if (forget && key) hintTickerState.delete(key)
+  },
+
+  tickerKey(text) {
+    return `${this.el.id}:${text}`
+  },
+
+  tickerState(key, durationMs) {
+    const existing = hintTickerState.get(key)
+
+    if (existing?.durationMs === durationMs) return existing
+
+    const state = {startedAt: performance.now(), durationMs}
+    hintTickerState.set(key, state)
+    return state
+  },
+
+  setTickerProperty(name, value) {
+    if (this.content.style.getPropertyValue(name) !== value) {
+      this.content.style.setProperty(name, value)
+    }
   },
 }
 

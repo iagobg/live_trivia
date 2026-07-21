@@ -69,14 +69,17 @@ defmodule LiveTriviaWeb.LobbyLive do
 
         <div class="relative z-10 mx-auto flex w-full max-w-5xl flex-col gap-8">
           <header class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <div class="text-sm font-semibold uppercase tracking-[0.22em] text-indigo-300">
-                Live Trivia
+            <div class="flex flex-col gap-4">
+              <Layouts.logo
+                mark_class="h-14 w-14"
+                text_class="text-2xl font-black tracking-wide text-white"
+              />
+              <div>
+                <h1 class="mt-2 text-3xl font-black sm:text-4xl">Open Rooms</h1>
+                <p class="mt-2 max-w-xl text-sm text-gray-400">
+                  Create a room, load a quiz, and invite players into the live game.
+                </p>
               </div>
-              <h1 class="mt-2 text-3xl font-black sm:text-4xl">Open Rooms</h1>
-              <p class="mt-2 max-w-xl text-sm text-gray-400">
-                Create a room, load a quiz, and invite players into the live game.
-              </p>
             </div>
 
             <.form
@@ -119,7 +122,7 @@ defmodule LiveTriviaWeb.LobbyLive do
                     class="h-4 w-4 rounded border-gray-600 bg-gray-950 text-indigo-600"
                   /> Password
                 </label>
-                <button class="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-500">
+                <button class="flex-1 rounded-xl bg-indigo-500 px-4 py-3 text-sm font-bold text-white shadow-[0_0_18px_rgba(99,102,241,0.25)] transition hover:bg-indigo-400">
                   Create
                 </button>
               </div>

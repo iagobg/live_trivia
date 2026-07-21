@@ -30,12 +30,12 @@
   --color-base-200: oklch(25.26% 0.014 253.1);
   --color-base-300: oklch(20.15% 0.012 254.09);
   --color-base-content: oklch(97.807% 0.029 256.847);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-content: oklch(96% 0.018 272.314);
-  --color-secondary: oklch(58% 0.233 277.117);
-  --color-secondary-content: oklch(96% 0.018 272.314);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
+  --color-primary: oklch(64% 0.22 263);
+  --color-primary-content: oklch(98% 0.016 260);
+  --color-secondary: oklch(68% 0.19 292);
+  --color-secondary-content: oklch(98% 0.016 292);
+  --color-accent: oklch(72% 0.17 220);
+  --color-accent-content: oklch(99% 0.01 220);
   --color-neutral: oklch(37% 0.044 257.287);
   --color-neutral-content: oklch(98% 0.003 247.858);
   --color-info: oklch(58% 0.158 241.966);
@@ -65,12 +65,12 @@
   --color-base-200: oklch(96% 0.001 286.375);
   --color-base-300: oklch(92% 0.004 286.32);
   --color-base-content: oklch(21% 0.006 285.885);
-  --color-primary: oklch(70% 0.213 47.604);
-  --color-primary-content: oklch(98% 0.016 73.684);
-  --color-secondary: oklch(55% 0.027 264.364);
-  --color-secondary-content: oklch(98% 0.002 247.839);
-  --color-accent: oklch(0% 0 0);
-  --color-accent-content: oklch(100% 0 0);
+  --color-primary: oklch(54% 0.23 263);
+  --color-primary-content: oklch(99% 0.012 260);
+  --color-secondary: oklch(62% 0.19 292);
+  --color-secondary-content: oklch(99% 0.012 292);
+  --color-accent: oklch(56% 0.2 230);
+  --color-accent-content: oklch(99% 0.012 230);
   --color-neutral: oklch(44% 0.017 285.786);
   --color-neutral-content: oklch(98% 0 0);
   --color-info: oklch(62% 0.214 259.815);
@@ -106,7 +106,8 @@
 
 html,
 body {
-  background: #030712;
+  background: #020617;
+  color-scheme: dark;
 }
 
 
@@ -117,11 +118,16 @@ body {
   width: 2px;
   height: 2px;
   border-radius: 9999px;
-  background: white;
+  background: rgba(224, 231, 255, 0.92);
+  box-shadow: 0 0 8px rgba(129, 140, 248, 0.5);
 }
 
 .round-progress {
   transition: stroke 180ms ease, opacity 180ms ease;
+}
+
+.hint-stack .hint-ticker {
+  will-change: transform, opacity;
 }
 
 .hint-ticker-content {
@@ -132,8 +138,13 @@ body {
   will-change: transform;
 }
 
+.hint-ticker.is-scrolling {
+  justify-content: flex-start;
+  text-align: left;
+}
+
 .hint-ticker.is-scrolling .hint-ticker-content {
-  animation: hint-ticker-scroll var(--hint-duration, 10s) ease-in-out 20ms infinite;
+  animation: hint-ticker-scroll var(--hint-duration, 10s) ease-in-out var(--hint-delay, 20ms) infinite;
 }
 
 .typing-bubble-content {

@@ -11,9 +11,18 @@
       content="Create live trivia rooms, host real-time quizzes, and let players compete with fast interactive answers."
     />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <.live_title default="LiveTrivia">
+    <.live_title default="Live Trivia">
       {assigns[:page_title]}
     </.live_title>
+    <link rel="icon" type="image/png" href={~p"/images/live-trivia-mark.png"} />
+    <link rel="apple-touch-icon" href={~p"/images/live-trivia-mark.png"} />
+    <meta property="og:title" content="Live Trivia" />
+    <meta
+      property="og:description"
+      content="Create live trivia rooms, host real-time quizzes, and let players compete with fast interactive answers."
+    />
+    <meta property="og:image" content={~p"/images/live-trivia-logo.png"} />
+    <meta name="theme-color" content="#030712" />
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>

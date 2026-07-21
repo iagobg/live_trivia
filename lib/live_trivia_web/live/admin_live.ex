@@ -102,6 +102,295 @@ defmodule LiveTriviaWeb.AdminLive do
       ]
     }
   ]
+  @preset_trivias [
+    %{
+      id: "historia",
+      title: "História",
+      description: "De grandes impérios a eventos que mudaram o mundo.",
+      questions: [
+        %{
+          question: "Civilização Antiga",
+          answer: "Império Romano",
+          hints: [
+            "Dominou territórios em três continentes diferentes simultaneamente",
+            "Construiu uma rede de estradas e aquedutos impressionantes que existem até hoje",
+            "Dividiu-se em duas partes (Ocidente e Oriente) antes de sua queda final",
+            "Seus imperadores costumavam oferecer 'Pão e Circo' para a população",
+            "Sua capital fica na Itália e abriga o Coliseu"
+          ]
+        },
+        %{
+          question: "Conflito Global",
+          answer: "Guerra Fria",
+          hints: [
+            "Durou décadas, mas nunca teve um confronto militar direto e oficial entre os dois lados principais",
+            "Dividiu o planeta nos conceitos de 'Primeiro Mundo', 'Segundo Mundo' e 'Terceiro Mundo'",
+            "Envolveu uma corrida muito além das nuvens, rumo ao espaço",
+            "Seus maiores símbolos foram a construção (e depois a queda) do Muro de Berlim",
+            "Foi a disputa ideológica entre os Estados Unidos e a União Soviética"
+          ]
+        },
+        %{
+          question: "Figura Histórica Feminina",
+          answer: "Cleópatra",
+          hints: [
+            "Foi a última governante ativa do Reino Ptolemaico",
+            "Embora governasse um país africano, sua linhagem familiar original era grega (macedônia)",
+            "Teve relacionamentos amorosos e políticos com Júlio César e Marco Antônio",
+            "A lenda mais famosa diz que ela se suicidou após ser picada por uma cobra venenosa",
+            "É a mais famosa rainha do Egito Antigo"
+          ]
+        },
+        %{
+          question: "Evento na História do Brasil",
+          answer: "Chegada da Família Real Portuguesa",
+          hints: [
+            "Foi motivado por guerras intensas que aconteciam no continente europeu",
+            "Foi um evento inédito: fez com que uma colônia passasse a sediar o próprio império que a dominava",
+            "Trouxe como consequência imediata a Abertura dos Portos às 'Nações Amigas'",
+            "Eles vieram ao Brasil fugindo das tropas de Napoleão Bonaparte",
+            "Aconteceu em 1808 com o desembarque de Dom João VI no Rio de Janeiro"
+          ]
+        },
+        %{
+          question: "Invenção Histórica",
+          answer: "Imprensa",
+          hints: [
+            "Revolucionou completamente a forma como a informação e as ideias circulavam no mundo",
+            "Ajudou imensamente a espalhar os ideais da Reforma Protestante pela Europa",
+            "Utilizava um sistema mecânico inovador de letras em peças móveis de metal",
+            "O primeiro grande livro produzido em massa por ela foi a Bíblia",
+            "Foi inventada por Johannes Gutenberg no século XV para imprimir textos no papel"
+          ]
+        },
+        %{
+          question: "Período Histórico",
+          answer: "Renascimento",
+          hints: [
+            "Começou como um movimento local em cidades-estado e se espalhou por toda a Europa",
+            "Valorizava a razão, a ciência e o resgate da cultura clássica (greco-romana)",
+            "Marcou a transição da Idade Média para a Idade Moderna",
+            "Foi financiado por mecenas e produziu gênios como Michelangelo e Galileu Galilei",
+            "Foi o período cultural em que Leonardo da Vinci pintou a Mona Lisa"
+          ]
+        },
+        %{
+          question: "Estrutura Histórica",
+          answer: "Muralha da China",
+          hints: [
+            "Demorou mais de dois milênios para ter todas as suas partes construídas e reconstruídas",
+            "Ao contrário do que diz um famoso mito popular, ela não pode ser vista do espaço a olho nu",
+            "Foi erguida com o objetivo de proteger um império de invasões de povos nômades",
+            "É considerada a mais longa estrutura já construída pela humanidade",
+            "É uma enorme fortificação localizada na... China"
+          ]
+        },
+        %{
+          question: "Império Pré-Colombiano",
+          answer: "Incas",
+          hints: [
+            "Não possuíam um sistema de escrita tradicional, mas registravam informações usando cordões com nós chamados 'quipus'",
+            "Seu território se estendia por quase toda a Cordilheira dos Andes, na América do Sul",
+            "Eles foram conquistados pelos colonizadores espanhóis, liderados por Francisco Pizarro",
+            "Falavam o idioma quíchua, que ainda é muito falado hoje em dia",
+            "Construíram a famosa cidade de Machu Picchu, no Peru"
+          ]
+        }
+      ]
+    },
+    %{
+      id: "geografia",
+      title: "Geografia",
+      description:
+        "Lugares, rios e formas do planeta com pistas para quem olha o mapa com calma.",
+      questions: [
+        %{
+          question: "País Continental",
+          answer: "Austrália",
+          hints: [
+            "É o sexto maior país do mundo em extensão territorial",
+            "Uma enorme parte do seu interior é uma região árida e desértica conhecida como 'Outback'",
+            "É o lar da Grande Barreira de Corais, que pode ser vista até do espaço",
+            "Não chega a ser um continente inteiro por si só, mas domina quase toda a Oceania",
+            "É a terra natal dos coalas e dos cangurus"
+          ]
+        },
+        %{
+          question: "Corpo d'Água",
+          answer: "Rio Amazonas",
+          hints: [
+            "Suas nascentes ficam no alto da Cordilheira dos Andes, no Peru",
+            "Durante muitos anos disputou com o Nilo o título de mais longo do mundo",
+            "Possui, de longe, a maior bacia hidrográfica e o maior volume de água do planeta",
+            "Nele ocorre o famoso fenômeno do encontro das águas (Rios Negro e Solimões) e a pororoca",
+            "Fica no norte do Brasil e cruza a gigantesca floresta que leva seu nome"
+          ]
+        },
+        %{
+          question: "Nação Asiática",
+          answer: "Japão",
+          hints: [
+            "É um arquipélago formado por quase 7 mil ilhas, embora as quatro maiores concentrem quase tudo",
+            "Sofre constantemente com terremotos e tsunamis por estar localizado no Círculo de Fogo do Pacífico",
+            "Sua cultura exporta fortemente mangás, sushis e samurais",
+            "É mundialmente conhecido pela alcunha de 'A Terra do Sol Nascente'",
+            "Sua capital é Tóquio e o país é famoso pelas animações (animes)"
+          ]
+        },
+        %{
+          question: "Formação Geográfica",
+          answer: "Deserto do Saara",
+          hints: [
+            "Estudos indicam que, há milhares de anos, essa região era verde, úmida e cheia de lagos",
+            "Suas areias são levadas pelo vento por cima do oceano até a Amazônia para fertilizá-la",
+            "É tão grande que atravessa o território de mais de 10 países diferentes no mesmo continente",
+            "É o maior deserto do mundo na categoria 'quente'",
+            "Cobre grande parte do Norte da África com suas dunas gigantescas de areia e camelos"
+          ]
+        },
+        %{
+          question: "País da América do Norte",
+          answer: "Canadá",
+          hints: [
+            "Possui a maior linha costeira (litoral) entre todos os países do mundo",
+            "Sua economia, política e cultura têm forte influência de duas línguas oficiais: inglês e francês",
+            "Em área total, é o segundo maior país de todo o planeta",
+            "Sua bandeira exibe orgulhosamente uma folha vermelha de bordo (Maple)",
+            "Fica no extremo norte da América, logo acima (fazendo fronteira) com os Estados Unidos"
+          ]
+        },
+        %{
+          question: "Cidade Histórica e Estratégica",
+          answer: "Istambul",
+          hints: [
+            "Na antiguidade, antes de ser o centro de um império, a cidade era chamada de Bizâncio",
+            "Foi a grandiosa capital do Império Romano do Oriente e, depois, do Império Otomano",
+            "Geograficamente, é dividida ao meio pelo famoso Estreito de Bósforo",
+            "É a única grande metrópole do mundo que fica oficialmente dividida em dois continentes (Europa e Ásia)",
+            "É a maior e mais famosa cidade da Turquia"
+          ]
+        },
+        %{
+          question: "Estado Soberano",
+          answer: "Vaticano",
+          hints: [
+            "Possui sua própria rede de correios, moeda, estação de rádio e banco central",
+            "A segurança pessoal de seu chefe de estado é feita por uma força chamada Guarda Suíça",
+            "Todo o seu pequeno território é oficialmente classificado como Patrimônio Mundial da Humanidade",
+            "Em termos de área territorial e população, é o menor país independente do mundo",
+            "É um enclave cercado pela cidade de Roma (Itália) e serve como a casa do Papa"
+          ]
+        },
+        %{
+          question: "Elevação Geográfica",
+          answer: "Monte Everest",
+          hints: [
+            "Sua altitude total continua crescendo alguns milímetros por ano por causa da colisão de placas tectônicas",
+            "Fica localizado exatamente na fronteira entre o Nepal e a China (região do Tibete)",
+            "Existem centenas de corpos de alpinistas congelados que servem como pontos de referência macabros",
+            "Mede cerca de 8.848 metros de altura e fica na famosa Cordilheira do Himalaia",
+            "É o ponto mais alto de todo o planeta Terra em relação ao nível do mar"
+          ]
+        }
+      ]
+    },
+    %{
+      id: "esportes",
+      title: "Esportes",
+      description:
+        "Futebol, Olimpíadas e cultura esportiva com Brasil no radar sem virar prova de almanaque.",
+      questions: [
+        %{
+          question: "Atleta Histórico",
+          answer: "Pelé",
+          hints: [
+            "Iniciou sua carreira profissional no Santos Futebol Clube",
+            "Foi um dos responsáveis por paralisar temporariamente uma guerra na Nigéria",
+            "Marcou mais de mil gols ao longo de sua trajetória profissional",
+            "É o único jogador da história a vencer três Copas do Mundo",
+            "É mundialmente conhecido como o 'Rei do Futebol'"
+          ]
+        },
+        %{
+          question: "Atleta Olímpico",
+          answer: "Michael Phelps",
+          hints: [
+            "Participou de cinco edições diferentes dos Jogos Olímpicos",
+            "Tem uma envergadura de 2,01m e calça impressionantes tamanho 43",
+            "É o atleta olímpico mais condecorado de todos os tempos, quebrando recordes milenares",
+            "Seu esporte de domínio envolve muita água, técnica e toucas",
+            "É um nadador americano que conquistou 23 medalhas de ouro"
+          ]
+        },
+        %{
+          question: "Evento Esportivo",
+          answer: "Super Bowl",
+          hints: [
+            "Possui os espaços publicitários mais caros de toda a televisão mundial",
+            "Acontece tradicionalmente sempre em um domingo, gerando um consumo altíssimo de comida",
+            "É conhecido por ter um show espetacular e milionário no intervalo da partida",
+            "Decide qual equipe leva o Troféu Vince Lombardi da NFL",
+            "É a grande final anual do campeonato de futebol americano"
+          ]
+        },
+        %{
+          question: "Esporte de Raquete",
+          answer: "Tênis",
+          hints: [
+            "Seus quatro torneios mais importantes do ano formam o circuito 'Grand Slam'",
+            "O sistema de pontuação é bem diferentão: vai de 15, para 30, depois 40...",
+            "Pode ser jogado em diferentes superfícies: saibro, grama ou quadra dura",
+            "Roger Federer, Rafael Nadal e Serena Williams são lendas absolutas desse esporte",
+            "Você usa uma raquete com cordas para rebater uma bolinha amarela por cima de uma rede"
+          ]
+        },
+        %{
+          question: "Competição Esportiva",
+          answer: "Fórmula 1",
+          hints: [
+            "Possui uma das provas mais famosas e luxuosas nas ruas do Principado de Mônaco",
+            "É administrada e regida internacionalmente pela FIA",
+            "Possui equipes mecânicas que conseguem trocar pneus em menos de 3 segundos",
+            "Ayrton Senna conquistou três títulos mundiais nela",
+            "É a categoria máxima do automobilismo, com os carros de corrida mais rápidos do mundo"
+          ]
+        },
+        %{
+          question: "Arte Marcial",
+          answer: "Judô",
+          hints: [
+            "Foi criado no Japão no final do século XIX por Jigoro Kano",
+            "Seu nome, em tradução literal para o português, significa 'caminho suave'",
+            "Não utiliza socos ou chutes; o foco é em projeções, quedas e imobilizações no solo",
+            "A pontuação máxima e que encerra a luta imediatamente se chama 'Ippon'",
+            "Os praticantes usam um quimono branco ou azul com faixas coloridas que indicam o nível"
+          ]
+        },
+        %{
+          question: "Esporte em Equipe",
+          answer: "Vôlei",
+          hints: [
+            "Originalmente, quando foi inventado em 1895, se chamava 'Mintonette'",
+            "Possui uma posição exclusivamente de defesa chamada 'Líbero', que usa um uniforme de cor diferente",
+            "É expressamente proibido invadir a quadra do adversário durante o jogo",
+            "Os times podem dar no máximo três toques na bola antes de mandá-la para o outro lado",
+            "O objetivo é fazer a bola passar por cima da rede e tocar no chão da quadra adversária"
+          ]
+        },
+        %{
+          question: "Esporte de Precisão",
+          answer: "Golfe",
+          hints: [
+            "É um dos raros esportes em que o vencedor é justamente quem faz a menor quantidade de pontos",
+            "É praticado em enormes campos abertos ao ar livre que possuem muitos lagos e caixas de areia",
+            "Woods é o sobrenome do seu atleta mais famoso do mundo (Tiger)",
+            "Uma partida padrão exige que o jogador passe por um circuito de 18 'buracos'",
+            "O jogador usa diferentes tipos de tacos de metal para bater em uma pequena bolinha branca"
+          ]
+        }
+      ]
+    }
+  ]
   @synthetic_player_count 16
   @synthetic_test_cycles 5
   @synthetic_keystroke_limit 18
@@ -110,6 +399,16 @@ defmodule LiveTriviaWeb.AdminLive do
   @synthetic_client_start_delay_ms 100
 
   def demo_questions, do: @example_questions
+  def preset_trivias, do: @preset_trivias
+
+  def preset_questions(preset_id) do
+    @preset_trivias
+    |> Enum.find(&(&1.id == preset_id))
+    |> case do
+      nil -> nil
+      preset -> preset.questions
+    end
+  end
 
   @impl true
   def mount(%{"room_id" => room_id} = params, session, socket) do
@@ -181,9 +480,30 @@ defmodule LiveTriviaWeb.AdminLive do
 
   @impl true
   def handle_event("load_demo", _params, socket) do
-    Game.load_questions(socket.assigns.room_id, demo_questions())
+    questions = demo_questions()
+    Game.load_questions(socket.assigns.room_id, questions)
     Lobby.touch_room(socket.assigns.room_id)
-    {:noreply, assign(socket, :validation_error, nil)}
+
+    {:noreply,
+     socket
+     |> assign(:json_text, Jason.encode!(questions, pretty: true))
+     |> assign(:validation_error, nil)}
+  end
+
+  def handle_event("load_preset", %{"id" => preset_id}, socket) do
+    case preset_questions(preset_id) do
+      nil ->
+        {:noreply, assign(socket, :validation_error, "Preset not found")}
+
+      questions ->
+        Game.load_questions(socket.assigns.room_id, questions)
+        Lobby.touch_room(socket.assigns.room_id)
+
+        {:noreply,
+         socket
+         |> assign(:json_text, Jason.encode!(questions, pretty: true))
+         |> assign(:validation_error, nil)}
+    end
   end
 
   def handle_event("run_synthetic_render_test", _params, socket) do
@@ -310,13 +630,26 @@ defmodule LiveTriviaWeb.AdminLive do
         />
       <% end %>
 
-      <div class="fixed bottom-4 right-4 z-50 w-[min(32rem,calc(100vw-2rem))] rounded-xl border border-gray-700 bg-gray-900/95 p-3 text-white shadow-2xl">
-        <.form for={%{}} as={:quiz} phx-submit="load_json" class="space-y-2">
+      <div class="fixed bottom-4 right-4 z-50 max-h-[calc(100svh-6rem)] w-[min(42rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border border-gray-700 bg-gray-900/95 p-3 text-white shadow-2xl">
+        <.form for={%{}} as={:quiz} phx-submit="load_json" class="space-y-3">
+          <div class="grid gap-2 sm:grid-cols-3">
+            <button
+              :for={preset <- preset_trivias()}
+              type="button"
+              phx-click="load_preset"
+              phx-value-id={preset.id}
+              class="rounded-lg border border-indigo-400/30 bg-indigo-500/10 px-3 py-2 text-left transition hover:border-indigo-300 hover:bg-indigo-500/20"
+            >
+              <span class="block text-sm font-bold text-indigo-100">{preset.title}</span>
+              <span class="mt-1 block text-xs leading-snug text-gray-400">{preset.description}</span>
+            </button>
+          </div>
+
           <textarea
             name="quiz[json]"
             class="h-32 w-full rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs text-gray-200 outline-none focus:border-indigo-500"
           >{@json_text}</textarea>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <button
               type="submit"
               class="rounded-lg bg-indigo-700 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-600"
@@ -328,7 +661,7 @@ defmodule LiveTriviaWeb.AdminLive do
               phx-click="load_demo"
               class="rounded-lg bg-gray-700 px-3 py-1.5 text-sm hover:bg-gray-600"
             >
-              Demo
+              Demo EN
             </button>
             <span :if={@validation_error} class="text-xs text-red-400">{@validation_error}</span>
           </div>
@@ -347,7 +680,8 @@ defmodule LiveTriviaWeb.AdminLive do
     ~H"""
     <div class="fixed left-0 right-0 top-0 z-50 border-b border-gray-700 bg-gray-900/95 px-4 py-2 text-white">
       <div class="flex flex-wrap items-center gap-3">
-        <span class="mr-2 text-sm font-bold text-indigo-400">ADMIN</span>
+        <Layouts.logo show_name={false} mark_class="h-8 w-8 rounded-lg" />
+        <span class="mr-2 text-sm font-bold text-indigo-300">ADMIN</span>
         <span class="rounded-full bg-indigo-500/15 px-2 py-1 text-xs font-semibold text-indigo-200">
           {@room.name}
         </span>

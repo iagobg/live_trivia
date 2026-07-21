@@ -13,6 +13,19 @@ defmodule LiveTrivia.GameTest do
     %{question: "Capital of Japan", answer: "Tokyo", hints: ["Japan", "T", "To", "Edo", "City"]}
   ]
 
+  test "accepts answers without Portuguese accents" do
+    room = create_room!()
+    track_admin!(room)
+
+    questions = [%{question: "Capital brasileira", answer: "Brasília", hints: []}]
+
+    assert :ok = Game.load_questions(room.id, questions)
+    assert :ok = Game.start_quiz(room.id)
+    assert %{result: :correct} = Game.submit_guess(room.id, "player-1", "Player 1", "brasilia")
+
+    on_exit(fn -> Lobby.close_room(room.id) end)
+  end
+
   test "ignores stale timer messages from previous round lifecycles" do
     room = create_room!()
     track_admin!(room)

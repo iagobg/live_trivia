@@ -249,9 +249,13 @@ defmodule LiveTriviaWeb.TriviaComponents do
               </div>
             </div>
 
-            <div class="grid h-[4.5rem] w-full grid-rows-3 gap-1 overflow-hidden">
+            <div
+              id={"hint-stack-#{@game_state.current_index}"}
+              phx-hook="HintStack"
+              class="hint-stack grid h-[4.5rem] w-full grid-rows-3 gap-1 overflow-hidden"
+            >
               <div
-                :for={{hint, index} <- Enum.with_index(@visible_hints)}
+                :for={{hint, index} <- @visible_hints}
                 id={"hint-ticker-#{@game_state.current_index}-#{index}"}
                 phx-hook="HintTicker"
                 class="hint-ticker flex h-5 items-center justify-center overflow-hidden rounded-md border border-indigo-500/50 bg-indigo-600/70 px-2 text-center text-[0.66rem] font-semibold leading-none text-white"
@@ -413,6 +417,7 @@ defmodule LiveTriviaWeb.TriviaComponents do
   defp visible_hints(%{hints: hints}, %{revealed_hints: revealed_hints}) do
     hints
     |> Enum.take(revealed_hints)
+    |> Enum.with_index()
     |> Enum.take(-3)
   end
 

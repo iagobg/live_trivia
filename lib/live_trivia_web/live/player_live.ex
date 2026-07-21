@@ -393,6 +393,11 @@ defmodule LiveTriviaWeb.PlayerLive do
         <main class="keyboard-aware-join-screen flex min-h-[var(--app-viewport-height,100svh)] items-center justify-center bg-gray-950 px-4 py-8 pb-[calc(env(safe-area-inset-bottom)+2rem)] text-white sm:min-h-screen">
           <%= if @room_password_required? && !@room_unlocked? do %>
             <div class="w-full max-w-sm text-center">
+              <Layouts.logo
+                show_name={false}
+                class="mb-8 justify-center"
+                mark_class="h-16 w-16"
+              />
               <div class="mb-6 sm:mb-8">
                 <div class="mb-4 text-sm font-black uppercase tracking-[0.22em] text-amber-300">
                   Locked room
@@ -420,7 +425,7 @@ defmodule LiveTriviaWeb.PlayerLive do
                 <div :if={@room_password_error} class="text-sm font-semibold text-red-300">
                   {@room_password_error}
                 </div>
-                <button class="rounded-xl bg-indigo-600 px-8 py-3 text-lg font-bold text-white transition-colors hover:bg-indigo-500">
+                <button class="rounded-xl bg-indigo-500 px-8 py-3 text-lg font-bold text-white shadow-[0_0_20px_rgba(99,102,241,0.28)] transition-colors hover:bg-indigo-400">
                   Continue
                 </button>
               </.form>
@@ -428,7 +433,11 @@ defmodule LiveTriviaWeb.PlayerLive do
           <% else %>
             <div class="w-full max-w-sm text-center">
               <div class="mb-6 sm:mb-8">
-                <div class="mb-4 text-6xl font-black text-indigo-300">?</div>
+                <Layouts.logo
+                  show_name={false}
+                  class="mb-5 justify-center"
+                  mark_class="h-20 w-20"
+                />
                 <h1 class="mb-2 text-3xl font-bold sm:text-4xl">{@room.name}</h1>
                 <p class="text-lg text-gray-400">Join as a player</p>
               </div>
@@ -474,7 +483,7 @@ defmodule LiveTriviaWeb.PlayerLive do
                 <button
                   type="submit"
                   disabled={is_nil(@candidate_color)}
-                  class="rounded-xl bg-indigo-600 px-8 py-3 text-lg font-bold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+                  class="rounded-xl bg-indigo-500 px-8 py-3 text-lg font-bold text-white shadow-[0_0_20px_rgba(99,102,241,0.28)] transition-colors hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Join Game
                 </button>
